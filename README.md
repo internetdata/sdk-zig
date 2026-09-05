@@ -76,7 +76,7 @@ family.redistribution;          // evaluation, internal, redistribute, or null
 const id = family.versions[0].id; // bogon_ip_v1 - what you download
 ```
 
-`list` is the server's answer about *your* key, and nothing else assembles it. A database commissioned for a single customer is **absent** from every other organization's listing rather than present with an `unlicensed` standing, so two keys can see two different catalogs, and neither the catalog nor any part of it can be reconstructed from another source. Read a listing as an answer about the key that fetched it, and do not reuse one across keys.
+`list` is the server's answer about *your* key, and nothing else assembles it.
 
 ### Metadata
 
