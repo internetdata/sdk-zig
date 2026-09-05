@@ -26,7 +26,7 @@ test "live catalog" {
     var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
     defer client.deinit();
 
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
     try std.testing.expect(catalog.value.len > 0);
 
@@ -47,7 +47,7 @@ test "live catalog" {
         std.debug.print("this key licenses nothing, so there is no metadata to read\n", .{});
         return;
     };
-    const info = try client.metadata(id, .{});
+    const info = try client.database().metadata(id, .{});
     defer info.deinit();
     std.debug.print("{s}: {d} rows, updated {s}, csvgz {?d} bytes\n", .{
         info.value.id,

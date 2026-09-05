@@ -17,7 +17,7 @@ pub fn main(init: std.process.Init) !void {
     var client = try internetdata.Client.init(init.gpa, init.io, .{ .api_key = args[1] });
     defer client.deinit();
 
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
     for (catalog.value) |family| {

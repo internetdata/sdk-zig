@@ -1,7 +1,7 @@
 //! The official Zig client library for the [InternetData](https://internetdata.io)
 //! API: licensed IP and network databases, downloaded as CSV.GZ or MMDB.
 //!
-//! Start with `Client.init` and `Client.list`. Every endpoint needs an API key
+//! Start with `Client.init`, then `Client.database()`. Every endpoint needs an API key
 //! carrying the `db.download` scope, which is why `Options.api_key` has no
 //! default: there is no anonymous tier to fall back on.
 //!
@@ -12,14 +12,14 @@
 //! var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
 //! defer client.deinit();
 //!
-//! const catalog = try client.list(.{});
+//! const catalog = try client.database().list(.{});
 //! defer catalog.deinit();
 //! std.debug.print("{s}\n", .{catalog.value[0].versions[0].id});
 //! ```
 //!
 //! # What a listing is
 //!
-//! `list` is the server's answer about YOUR key. A database commissioned for a
+//! `database().list` is the server's answer about YOUR key. A database commissioned for a
 //! single customer is absent from every other organization's listing rather than
 //! present with an `unlicensed` standing, so two keys can see two different
 //! catalogs and neither can be reconstructed from anywhere else.
@@ -40,6 +40,7 @@ pub const Options = @import("client.zig").Options;
 pub const default_base_url = @import("client.zig").default_base_url;
 
 pub const Checksums = @import("database.zig").Checksums;
+pub const Database = @import("database.zig").Database;
 pub const DatabaseFamily = @import("database.zig").DatabaseFamily;
 pub const DatabaseMetadata = @import("database.zig").DatabaseMetadata;
 pub const DatabaseMetadataColumn = @import("database.zig").DatabaseMetadataColumn;

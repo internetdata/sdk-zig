@@ -35,7 +35,7 @@ test "the catalogue answers the schema the client was written from" {
     const rung = try staging.Rung.start(gpa);
     defer rung.deinit();
 
-    const catalog = try rung.client.list(.{});
+    const catalog = try rung.client.database().list(.{});
     defer catalog.deinit();
     try rung.assertKeyReachedTheWire();
     try std.testing.expect(catalog.value.len > 0);
@@ -71,7 +71,7 @@ test "the listing is returned exactly as served" {
     const rung = try staging.Rung.start(gpa);
     defer rung.deinit();
 
-    const catalog = try rung.client.list(.{});
+    const catalog = try rung.client.database().list(.{});
     defer catalog.deinit();
     try rung.assertKeyReachedTheWire();
 
@@ -105,7 +105,7 @@ test "a database the organization does not license is refused once" {
     const rung = try staging.Rung.start(gpa);
     defer rung.deinit();
 
-    const catalog = try rung.client.list(.{});
+    const catalog = try rung.client.database().list(.{});
     defer catalog.deinit();
     try rung.assertKeyReachedTheWire();
 
@@ -116,7 +116,7 @@ test "a database the organization does not license is refused once" {
     const before = rung.proxy.seen().len;
 
     var diagnostics: internetdata.Diagnostics = .{};
-    const failure = rung.client.downloadUrl(unlicensed, format, .{
+    const failure = rung.client.database().downloadUrl(unlicensed, format, .{
         .retries = 3,
         .diagnostics = &diagnostics,
     });
@@ -143,7 +143,7 @@ test "a real database moves intact, in memory and on disk" {
     const rung = try staging.Rung.start(gpa);
     defer rung.deinit();
 
-    const info = try rung.client.metadata(dataset_id, .{});
+    const info = try rung.client.database().metadata(dataset_id, .{});
     defer info.deinit();
     try rung.assertKeyReachedTheWire();
     try std.testing.expectEqualStrings(dataset_id, info.value.id);
@@ -163,7 +163,7 @@ test "a real database moves intact, in memory and on disk" {
     var scratch = staging.Scratch.start();
     defer scratch.deinit();
     const path = scratch.path(dataset_id ++ ".csv.gz");
-    const written = try rung.client.download(dataset_id, format, path, .{});
+    const written = try rung.client.database().download(dataset_id, format, path, .{});
     std.debug.print("{s}.{t}: {d} bytes, metadata says {d}\n", .{ dataset_id, format, written, size });
 
     try std.testing.expect(written > 0);
@@ -178,13 +178,13 @@ test "a real database moves intact, in memory and on disk" {
 
     // Read AFTER the transfer, so a rebuild between the two calls shows up as a
     // digest mismatch rather than passing against the digest of nothing.
-    const digests = try rung.client.checksums(dataset_id, format, .{});
+    const digests = try rung.client.database().checksums(dataset_id, format, .{});
     defer digests.deinit();
     try std.testing.expectEqual(64, digests.value.sha256.len);
     try std.testing.expectEqualStrings(digests.value.sha256, &digest(bytes));
 
     // The in-memory variant has to be the same file, not merely a similar one.
-    const in_memory = try rung.client.downloadBytes(dataset_id, format, .{});
+    const in_memory = try rung.client.database().downloadBytes(dataset_id, format, .{});
     defer gpa.free(in_memory);
     try std.testing.expectEqualSlices(u8, bytes, in_memory);
 }
@@ -198,7 +198,7 @@ test "the download history answers the documented shape" {
     const rung = try staging.Rung.start(gpa);
     defer rung.deinit();
 
-    const history = try rung.client.downloads(20, .{});
+    const history = try rung.client.database().downloads(20, .{});
     defer history.deinit();
     try rung.assertKeyReachedTheWire();
 

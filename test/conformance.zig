@@ -31,7 +31,7 @@ test "an error is classified by range and by Retry-After, never by an enumerated
         defer client.deinit();
 
         var diagnostics: internetdata.Diagnostics = .{};
-        const err = failureOf(client.metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics }), case.name);
+        const err = failureOf(client.database().metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics }), case.name);
         try expectCase(case, err, diagnostics);
     }
 }
@@ -54,7 +54,7 @@ test "the download redirect classifies a refusal the same way" {
 
         var diagnostics: internetdata.Diagnostics = .{};
         const err = urlFailureOf(
-            client.downloadUrl("bogon_ip_v1", .csvgz, .{ .diagnostics = &diagnostics }),
+            client.database().downloadUrl("bogon_ip_v1", .csvgz, .{ .diagnostics = &diagnostics }),
             gpa,
             case.name,
         );
@@ -91,7 +91,7 @@ test "a closed set the API may extend still parses" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
     try std.testing.expectEqual(count, catalog.value.len);
@@ -158,7 +158,7 @@ fn servedAsIs(gpa: std.mem.Allocator) !void {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
     try std.testing.expectEqual(3, catalog.value.len);
@@ -186,7 +186,7 @@ fn nothingIsInvented(gpa: std.mem.Allocator) !void {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
     try std.testing.expectEqual(0, catalog.value.len);
 }
@@ -203,9 +203,9 @@ fn neverReused(gpa: std.mem.Allocator) !void {
     var second = try harness.client(.{ .api_key = "key-b" });
     defer second.deinit();
 
-    (try first.list(.{})).deinit();
-    (try second.list(.{})).deinit();
-    (try first.list(.{})).deinit();
+    (try first.database().list(.{})).deinit();
+    (try second.database().list(.{})).deinit();
+    (try first.database().list(.{})).deinit();
 
     const calls = harness.stub.seen();
     try std.testing.expectEqual(3, calls.len);

@@ -32,7 +32,7 @@ test "the API key reaches the wire as a bearer token" {
 
     var client = try harness.client(.{ .api_key = "mk_test_1234" });
     defer client.deinit();
-    (try client.list(.{})).deinit();
+    (try client.database().list(.{})).deinit();
 
     try std.testing.expectEqualStrings(
         "Bearer mk_test_1234",
@@ -60,7 +60,7 @@ test "the catalog unwraps a family and its versions" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
     try std.testing.expectEqual(1, catalog.value.len);
@@ -88,7 +88,7 @@ test "checksums returns the whole digest set from under its key" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const digests = try client.checksums("bogon_ip_v1", .mmdb, .{});
+    const digests = try client.database().checksums("bogon_ip_v1", .mmdb, .{});
     defer digests.deinit();
 
     try std.testing.expectEqualStrings("m", digests.value.md5);
@@ -113,7 +113,7 @@ test "metadata is keyed by format and carries a size to budget against" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const info = try client.metadata("bogon_ip_v1", .{});
+    const info = try client.database().metadata("bogon_ip_v1", .{});
     defer info.deinit();
 
     try std.testing.expectEqualStrings("bogon_ip_v1", info.value.id);
@@ -142,7 +142,7 @@ test "the download history keeps a refusal and its nulls" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const history = try client.downloads(10, .{});
+    const history = try client.database().downloads(10, .{});
     defer history.deinit();
 
     try std.testing.expectEqual(1, history.value.len);
@@ -161,7 +161,7 @@ test "a limit is only sent when one was asked for" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    (try client.downloads(null, .{})).deinit();
+    (try client.database().downloads(null, .{})).deinit();
     try std.testing.expectEqual(1, harness.stub.callCount());
 }
 
@@ -176,7 +176,7 @@ test "retries are configurable per call" {
 
     var client = try harness.client(.{ .api_key = "key", .retries = 0 });
     defer client.deinit();
-    try std.testing.expectError(error.ServerError, client.list(.{ .retries = 2 }));
+    try std.testing.expectError(error.ServerError, client.database().list(.{ .retries = 2 }));
 
     // One initial attempt plus two retries, rather than the client's zero.
     try std.testing.expectEqual(3, harness.stub.callCount());
@@ -195,7 +195,7 @@ test "a spent quota is never retried" {
 
     var client = try harness.client(.{ .api_key = "key", .retries = 5 });
     defer client.deinit();
-    try std.testing.expectError(error.QuotaExceeded, client.list(.{}));
+    try std.testing.expectError(error.QuotaExceeded, client.database().list(.{}));
     try std.testing.expectEqual(1, harness.stub.callCount());
 }
 
@@ -212,7 +212,7 @@ test "a rate limit is retried after the server supplied wait" {
     var client = try harness.client(.{ .api_key = "key", .retries = 1 });
     defer client.deinit();
     const started = Io.Clock.awake.now(harness.io());
-    try std.testing.expectError(error.RateLimited, client.list(.{}));
+    try std.testing.expectError(error.RateLimited, client.database().list(.{}));
 
     try std.testing.expectEqual(2, harness.stub.callCount());
     // The header, not the backoff schedule, decides the wait.
@@ -237,7 +237,7 @@ test "an unknown database is not retried" {
     var diagnostics: internetdata.Diagnostics = .{};
     try std.testing.expectError(
         error.BadRequest,
-        client.metadata("no_such_database_v1", .{ .diagnostics = &diagnostics }),
+        client.database().metadata("no_such_database_v1", .{ .diagnostics = &diagnostics }),
     );
 
     try std.testing.expectEqualStrings("UNKNOWN_DATASET", diagnostics.message());
@@ -265,7 +265,7 @@ test "downloadUrl returns the redirect rather than following it" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const url = try client.downloadUrl("bogon_ip_v1", .mmdb, .{});
+    const url = try client.database().downloadUrl("bogon_ip_v1", .mmdb, .{});
     defer gpa.free(url);
 
     try std.testing.expectEqualStrings(location, url);
@@ -284,7 +284,7 @@ test "download streams a database to disk and sends no key to object storage" {
 
     var client = try harness.client(.{ .api_key = "mk_test_1234" });
     defer client.deinit();
-    const written = try client.download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+    const written = try client.database().download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
 
     try std.testing.expectEqual(body.len, written);
     var read_buffer: [64_000]u8 = undefined;
@@ -314,7 +314,7 @@ test "a transfer asks for identity only" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    _ = try client.download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+    _ = try client.database().download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
 
     try std.testing.expectEqualStrings(
         "identity",
@@ -339,7 +339,7 @@ test "a compressed transfer is refused rather than written" {
 
     var client = try harness.client(.{ .api_key = "key", .retries = 0 });
     defer client.deinit();
-    try std.testing.expectError(error.Network, client.download(
+    try std.testing.expectError(error.Network, client.database().download(
         "bogon_ip_v1",
         .csvgz,
         scratch.path("data.csv.gz"),
@@ -361,9 +361,9 @@ test "downloadBytes agrees with the streamed copy byte for byte" {
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const written = try client.download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+    const written = try client.database().download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
 
-    const bytes = try client.downloadBytes("bogon_ip_v1", .csvgz, .{});
+    const bytes = try client.database().downloadBytes("bogon_ip_v1", .csvgz, .{});
     defer gpa.free(bytes);
 
     try std.testing.expectEqual(written, bytes.len);
@@ -386,7 +386,7 @@ test "a transfer that stops short fails and leaves nothing behind" {
     var client = try harness.client(.{ .api_key = "key", .retries = 0 });
     defer client.deinit();
     var diagnostics: internetdata.Diagnostics = .{};
-    try std.testing.expectError(error.Network, client.download(
+    try std.testing.expectError(error.Network, client.database().download(
         "bogon_ip_v1",
         .csvgz,
         scratch.path("data.csv.gz"),
@@ -400,7 +400,7 @@ test "a transfer that stops short fails and leaves nothing behind" {
     // The in-memory variant reads the same body through the same check.
     try std.testing.expectError(
         error.Network,
-        client.downloadBytes("bogon_ip_v1", .csvgz, .{}),
+        client.database().downloadBytes("bogon_ip_v1", .csvgz, .{}),
     );
 }
 
@@ -421,7 +421,7 @@ test "a database the organization does not license is refused once" {
     var client = try harness.client(.{ .api_key = "key", .retries = 3 });
     defer client.deinit();
     var diagnostics: internetdata.Diagnostics = .{};
-    try std.testing.expectError(error.Forbidden, client.download(
+    try std.testing.expectError(error.Forbidden, client.database().download(
         "hosting_ip_v1",
         .csvgz,
         scratch.path("data.csv.gz"),
@@ -451,7 +451,7 @@ test "a 200 where a redirect belongs is a server fault, not a file" {
     var diagnostics: internetdata.Diagnostics = .{};
     try std.testing.expectError(
         error.ServerError,
-        client.downloadUrl("bogon_ip_v1", .csvgz, .{ .diagnostics = &diagnostics }),
+        client.database().downloadUrl("bogon_ip_v1", .csvgz, .{ .diagnostics = &diagnostics }),
     );
     try std.testing.expectEqualStrings("expected a redirect to object storage", diagnostics.message());
 }
@@ -469,7 +469,7 @@ test "a per-call retry budget reaches the redirect too" {
     defer client.deinit();
     try std.testing.expectError(
         error.ServerError,
-        client.downloadUrl("bogon_ip_v1", .csvgz, .{ .retries = 2 }),
+        client.database().downloadUrl("bogon_ip_v1", .csvgz, .{ .retries = 2 }),
     );
     try std.testing.expectEqual(3, harness.stub.callCount());
 }
@@ -491,7 +491,7 @@ test "a metadata answer with no size is refused" {
     var diagnostics: internetdata.Diagnostics = .{};
     try std.testing.expectError(
         error.ServerError,
-        client.metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics }),
+        client.database().metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics }),
     );
     try std.testing.expectEqualStrings(
         "the answer did not match the documented shape",

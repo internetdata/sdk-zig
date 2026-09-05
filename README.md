@@ -34,7 +34,7 @@ pub fn main(init: std.process.Init) !void {
     var client = try internetdata.Client.init(init.gpa, init.io, .{ .api_key = key });
     defer client.deinit();
 
-    const catalog = try client.list(.{});
+    const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
     for (catalog.value) |family| {
@@ -44,6 +44,8 @@ pub fn main(init: std.process.Init) !void {
 ```
 
 The whole program is in [example/catalog.zig](example/catalog.zig); `zig build example` builds it.
+
+Every call lives under `client.database()`. The downloads are the whole of this API today, but the sibling VPNDetection client spells the same seven calls the same way, so a program holding both does not have to remember which one is flat.
 
 `init.io` is the `std.Io` implementation your program already runs on. Outside `main`, build your own:
 
@@ -64,7 +66,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 A licence covers a database *family*, and a download names one of its versions, so the id you pass to everything else comes from `versions`:
 
 ```zig
-const catalog = try client.list(.{});
+const catalog = try client.database().list(.{});
 defer catalog.deinit();
 
 const family = catalog.value[0];
@@ -81,7 +83,7 @@ const id = family.versions[0].id; // bogon_ip_v1 - what you download
 `metadata` says what is inside a database without transferring anything, so poll it to decide whether today's build is worth fetching, and read `size` to budget a transfer before starting one. One document covers every format the database is built in, which is why it takes no format:
 
 ```zig
-const info = try client.metadata(id, .{});
+const info = try client.database().metadata(id, .{});
 defer info.deinit();
 
 std.debug.print("{s}, {d} rows, updated {s}\n", .{ info.value.id, info.value.entries, info.value.updated });
@@ -92,14 +94,14 @@ std.debug.print("{?d} bytes as csvgz\n", .{info.value.size.map.get("csvgz")});
 
 ```zig
 // Straight to a file, which is the one to reach for by default.
-const written = try client.download(id, .csvgz, "bogon_ip_v1.csv.gz", .{});
+const written = try client.database().download(id, .csvgz, "bogon_ip_v1.csv.gz", .{});
 
 // A time-limited link, so something else can do the transfer.
-const url = try client.downloadUrl(id, .csvgz, .{});
+const url = try client.database().downloadUrl(id, .csvgz, .{});
 defer gpa.free(url);
 
 // The bytes, in memory.
-const bytes = try client.downloadBytes(id, .csvgz, .{});
+const bytes = try client.database().downloadBytes(id, .csvgz, .{});
 defer gpa.free(bytes);
 ```
 
@@ -114,7 +116,7 @@ defer gpa.free(bytes);
 `checksums` publishes all four digests for one published file, so you can check the bytes you received:
 
 ```zig
-const digests = try client.checksums(id, .csvgz, .{});
+const digests = try client.database().checksums(id, .csvgz, .{});
 defer digests.deinit();
 std.debug.print("{s}\n", .{digests.value.sha256});
 ```
@@ -124,7 +126,7 @@ std.debug.print("{s}\n", .{digests.value.sha256});
 `downloads` is your organization's recent attempts, newest first, refusals included: a denial is what answers "it stopped working", and its absence answers nothing. A null limit takes the API's own default of 50, and it is clamped to 200.
 
 ```zig
-const history = try client.downloads(20, .{});
+const history = try client.database().downloads(20, .{});
 defer history.deinit();
 
 for (history.value) |attempt| {
@@ -139,7 +141,7 @@ Failures are values in `internetdata.Error`, and the detail behind one arrives i
 ```zig
 var diagnostics: internetdata.Diagnostics = .{};
 
-const catalog = client.list(.{ .diagnostics = &diagnostics }) catch |err| {
+const catalog = client.database().list(.{ .diagnostics = &diagnostics }) catch |err| {
     std.debug.print("{s} retryable={} status={?} {s}\n", .{
         internetdata.kindName(err),
         internetdata.isRetryable(err),
@@ -156,7 +158,7 @@ The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `Quot
 Retries and how many of them are per call as well as per client:
 
 ```zig
-const catalog = try client.list(.{ .retries = 4 });
+const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
 Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded. Nothing else in the 4xx range is retried at all: a misspelled database id is a 404, and asking for it three times gets the same answer three times.
