@@ -1,0 +1,378 @@
+const std = @import("std");
+
+const errors = @import("errors.zig");
+
+const Allocator = std.mem.Allocator;
+const CallError = errors.CallError;
+const Diagnostics = errors.Diagnostics;
+const Io = std.Io;
+
+const retry_base_delay: Io.Duration = .fromMilliseconds(250);
+const retry_max_delay: Io.Duration = .fromSeconds(30);
+
+/// One request, and what to do if it fails.
+pub const Request = struct {
+    /// Whether the answer is the body or the `Location` of a redirect.
+    kind: enum { json, location } = .json,
+    path: []const u8,
+    query: []const Transport.Param = &.{},
+    retries: u32,
+    diagnostics: *Diagnostics,
+};
+
+/// Retries a transient failure, waiting whatever the server asked for over the
+/// caller's own backoff. A 429 WITHOUT `Retry-After` is a spent allowance rather
+/// than a throttle and is not retried at all.
+pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) CallError![]u8 {
+    const diag = request.diagnostics;
+    var delay = retry_base_delay;
+    var remaining = request.retries;
+    while (true) {
+        diag.reset();
+        const attempt = switch (request.kind) {
+            .json => transport.getJson(gpa, request.path, request.query, diag),
+            .location => transport.getLocation(gpa, request.path, request.query, diag),
+        };
+        if (attempt) |body| {
+            return body;
+        } else |err| {
+            if (remaining == 0 or !errors.isRetryable(err)) {
+                return err;
+            }
+            const wait: Io.Duration = if (diag.retry_after_s) |seconds|
+                .fromSeconds(@intCast(seconds))
+            else
+                delay;
+            io.sleep(wait, .awake) catch return err;
+            delay = .fromNanoseconds(@min(delay.nanoseconds * 2, retry_max_delay.nanoseconds));
+            remaining -= 1;
+        }
+    }
+}
+
+/// Every request the library makes: five GET operations with no request bodies,
+/// which is the whole API.
+pub const Transport = struct {
+    http: std.http.Client,
+    /// Without a trailing slash.
+    base_url: []const u8,
+    /// `Authorization: Bearer <key>`, built once and owned, so a caller is free
+    /// to drop the key it passed in.
+    authorization: []const u8,
+
+    /// A response body may not exceed this. The largest thing the API answers
+    /// with is a metadata document; anything at this size is a server fault
+    /// rather than an answer worth buffering. The dataset itself never comes
+    /// through here - it arrives on a `Transfer`, which is not buffered at all.
+    pub const max_body_bytes = 16 * 1024 * 1024;
+
+    pub const Param = struct { name: []const u8, value: []const u8 };
+
+    pub fn deinit(self: *Transport) void {
+        self.http.deinit();
+    }
+
+    /// The body of a 2xx JSON response, owned by `gpa`.
+    pub fn getJson(
+        self: *Transport,
+        gpa: Allocator,
+        path: []const u8,
+        query: []const Param,
+        diag: *Diagnostics,
+    ) CallError![]u8 {
+        const url = try self.buildUrl(gpa, path, query);
+        defer gpa.free(url);
+
+        var request = try self.open(url, diag);
+        defer request.deinit();
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+
+        const status = @intFromEnum(response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(response.head);
+        diag.retry_after_s = retry_after.seconds;
+
+        const body = try readBody(&response, gpa, diag);
+        if (status < 200 or status >= 300) {
+            defer gpa.free(body);
+            if (errors.envelopeMessage(gpa, body)) |message| {
+                defer gpa.free(message);
+                diag.setMessage(message);
+            }
+            return errors.classify(status, retry_after.present);
+        }
+        return body;
+    }
+
+    /// The `Location` of a redirect this client must NOT follow, owned by `gpa`.
+    ///
+    /// The download endpoint answers 302 to object storage, and the database
+    /// behind it routinely runs to gigabytes, so following it would transfer the
+    /// whole file to hand back a link. Every request is made with
+    /// `redirect_behavior = .unhandled`, which is not `std.http.Client`'s
+    /// default: left alone it follows up to three.
+    pub fn getLocation(
+        self: *Transport,
+        gpa: Allocator,
+        path: []const u8,
+        query: []const Param,
+        diag: *Diagnostics,
+    ) CallError![]u8 {
+        const url = try self.buildUrl(gpa, path, query);
+        defer gpa.free(url);
+
+        var request = try self.open(url, diag);
+        defer request.deinit();
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+
+        const status = @intFromEnum(response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(response.head);
+        diag.retry_after_s = retry_after.seconds;
+
+        if (status >= 300 and status < 400) {
+            const location = response.head.location orelse {
+                diag.setMessage("the redirect carried no Location header");
+                return error.ServerError;
+            };
+            return try gpa.dupe(u8, location);
+        }
+        if (status >= 200 and status < 300) {
+            diag.setMessage("expected a redirect to object storage");
+            return error.ServerError;
+        }
+        const body = try readBody(&response, gpa, diag);
+        defer gpa.free(body);
+        if (errors.envelopeMessage(gpa, body)) |message| {
+            defer gpa.free(message);
+            diag.setMessage(message);
+        }
+        return errors.classify(status, retry_after.present);
+    }
+
+    fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
+        return self.openWith(url, .{ .override = self.authorization }, .default, diag);
+    }
+
+    /// Which content encodings the answer may arrive in. A database transfer
+    /// pins `identity` so the bytes on the wire ARE the published file; the
+    /// JSON endpoints take whatever compresses best.
+    pub const Encodings = enum { default, identity_only };
+
+    fn openWith(
+        self: *Transport,
+        url: []const u8,
+        authorization: std.http.Client.Request.Headers.Value,
+        encodings: Encodings,
+        diag: *Diagnostics,
+    ) CallError!std.http.Client.Request {
+        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
+        var request = self.http.request(.GET, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = authorization,
+                .user_agent = .{ .override = user_agent },
+                // Asked for by name, because the header std would generate from
+                // the field below lists everything BUT identity and so emits a
+                // malformed one when identity is all that is left.
+                .accept_encoding = switch (encodings) {
+                    .default => .default,
+                    .identity_only => .{ .override = "identity" },
+                },
+            },
+        }) catch |err| return fail(diag, err);
+        errdefer request.deinit();
+        // Not decoration: `receiveHead` refuses a content encoding that is not
+        // set here, so an origin that compresses anyway is caught rather than
+        // writing bytes that do not match the digest the API publishes.
+        if (encodings == .identity_only) {
+            request.accept_encoding = @splat(false);
+            request.accept_encoding[@intFromEnum(std.http.ContentEncoding.identity)] = true;
+        }
+        request.sendBodiless() catch |err| return fail(diag, err);
+        return request;
+    }
+
+    fn buildUrl(
+        self: *Transport,
+        gpa: Allocator,
+        path: []const u8,
+        query: []const Param,
+    ) Allocator.Error![]u8 {
+        var url: std.ArrayList(u8) = .empty;
+        errdefer url.deinit(gpa);
+        try url.appendSlice(gpa, self.base_url);
+        try url.appendSlice(gpa, path);
+        for (query, 0..) |param, i| {
+            try url.append(gpa, if (i == 0) '?' else '&');
+            try url.appendSlice(gpa, param.name);
+            try url.append(gpa, '=');
+            try appendEncoded(gpa, &url, param.value);
+        }
+        return url.toOwnedSlice(gpa);
+    }
+
+    /// A transport failure is worth another attempt whatever its cause, so every
+    /// one of them is `error.Network` and the specific cause goes to the
+    /// diagnostics rather than into the error set.
+    fn fail(diag: *Diagnostics, err: anyerror) errors.Error {
+        diag.setMessage(@errorName(err));
+        return error.Network;
+    }
+};
+
+/// A database file arriving from object storage, and everything the origin said
+/// about it.
+///
+/// Held by the caller and NEVER copied after `begin`: `std.http.Client.Response`
+/// points back at the `Request` beside it, so a copy leaves that pointer aimed
+/// at the original.
+///
+/// This is the one request the library makes that carries **no Authorization
+/// header**. The link the download endpoint answers with is presigned: it
+/// authorizes itself through its query string, and object storage is a third
+/// party with no business seeing an API key.
+pub const Transfer = struct {
+    request: std.http.Client.Request = undefined,
+    response: std.http.Client.Response = undefined,
+    /// `Content-Length`, when the origin declared one. Null on a chunked body,
+    /// which is the only shape where a transfer cannot be length-checked.
+    declared: ?u64 = null,
+    body_buffer: [body_buffer_len]u8 = undefined,
+
+    /// Big enough that a gigabyte moves in reasonable chunks, small enough to
+    /// sit in a caller's frame.
+    pub const body_buffer_len = 16 * 1024;
+
+    /// Opens `url` and reads its head, leaving the body ready for `reader`.
+    /// The caller must `deinit` whether or not this succeeds past the open.
+    pub fn begin(
+        self: *Transfer,
+        transport: *Transport,
+        gpa: Allocator,
+        url: []const u8,
+        diag: *Diagnostics,
+    ) CallError!void {
+        self.* = .{};
+        self.request = try transport.openWith(url, .omit, .identity_only, diag);
+        errdefer self.request.deinit();
+
+        self.response = self.request.receiveHead(&.{}) catch |err| return Transport.fail(diag, err);
+        const status = @intFromEnum(self.response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(self.response.head);
+        diag.retry_after_s = retry_after.seconds;
+        if (status < 200 or status >= 300) {
+            const body = try readBody(&self.response, gpa, diag);
+            defer gpa.free(body);
+            if (errors.envelopeMessage(gpa, body)) |message| {
+                defer gpa.free(message);
+                diag.setMessage(message);
+            }
+            return errors.classify(status, retry_after.present);
+        }
+        self.declared = self.response.head.content_length;
+    }
+
+    pub fn deinit(self: *Transfer) void {
+        self.request.deinit();
+        self.* = undefined;
+    }
+
+    /// The file's bytes. Not decompressed: see `identity_only`.
+    pub fn reader(self: *Transfer) *Io.Reader {
+        return self.response.reader(&self.body_buffer);
+    }
+
+    /// A transfer that stopped short is a FAILURE, not a short file. Silence
+    /// here is how a truncated database gets written to disk, renamed into place
+    /// and read for weeks as a complete one.
+    pub fn verify(self: *Transfer, received: u64, diag: *Diagnostics) errors.Error!void {
+        const declared = self.declared orelse return;
+        if (received == declared) {
+            return;
+        }
+        var buffer: [Diagnostics.max_message_len]u8 = undefined;
+        diag.setMessage(std.fmt.bufPrint(
+            &buffer,
+            "the transfer stopped at {d} of {d} bytes",
+            .{ received, declared },
+        ) catch "the transfer stopped short of the declared length");
+        return error.Network;
+    }
+
+    /// Turns a body read that gave up into the retryable failure it is.
+    pub fn readFailure(self: *Transfer, diag: *Diagnostics) errors.Error {
+        return Transport.fail(diag, self.response.bodyErr() orelse error.ReadFailed);
+    }
+};
+
+/// The library's own user agent, so a request from it is identifiable in a log.
+pub const user_agent = "internetdata-zig/" ++ @import("build_options").version;
+
+fn readBody(
+    response: *std.http.Client.Response,
+    gpa: Allocator,
+    diag: *Diagnostics,
+) CallError![]u8 {
+    var decompress_buffer: []u8 = &.{};
+    defer gpa.free(decompress_buffer);
+    switch (response.head.content_encoding) {
+        .identity => {},
+        .compress => {
+            diag.setMessage("unsupported content encoding");
+            return error.ServerError;
+        },
+        else => |encoding| {
+            decompress_buffer = try gpa.alloc(u8, encoding.minBufferCapacity());
+        },
+    }
+    var transfer_buffer: [4096]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    return reader.allocRemaining(gpa, .limited(Transport.max_body_bytes)) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        // A body that stops mid-transfer is a transport failure, and one that
+        // never stops is a server fault; neither is the API saying no.
+        error.ReadFailed => Transport.fail(diag, response.bodyErr() orelse error.ReadFailed),
+        error.StreamTooLong => blk: {
+            diag.setMessage("the response body was too large to buffer");
+            break :blk error.ServerError;
+        },
+    };
+}
+
+/// `Retry-After` is seconds or an HTTP date. Its PRESENCE is what makes a 429 a
+/// throttle rather than a spent allowance, so the two are read separately: a
+/// value that will not parse still counts as the server asking us to wait, and
+/// the retry then falls back to the client's own backoff.
+fn readRetryAfter(head: std.http.Client.Response.Head) struct { present: bool, seconds: ?u64 } {
+    var it = head.iterateHeaders();
+    while (it.next()) |header| {
+        if (!std.ascii.eqlIgnoreCase(header.name, "retry-after")) {
+            continue;
+        }
+        const value = std.mem.trim(u8, header.value, " \t");
+        return .{ .present = true, .seconds = std.fmt.parseInt(u64, value, 10) catch null };
+    }
+    return .{ .present = false, .seconds = null };
+}
+
+/// Percent-encodes everything outside the unreserved set, so a database id that
+/// is not what the API documents cannot escape its query parameter.
+pub fn appendEncoded(gpa: Allocator, out: *std.ArrayList(u8), text: []const u8) Allocator.Error!void {
+    for (text) |c| {
+        switch (c) {
+            'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => try out.append(gpa, c),
+            else => try out.print(gpa, "%{X:0>2}", .{c}),
+        }
+    }
+}
+
+test "a query value is percent encoded" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try appendEncoded(gpa, &out, "bogon_ip_v1&format=mmdb");
+    try std.testing.expectEqualStrings("bogon_ip_v1%26format%3Dmmdb", out.items);
+}
