@@ -356,7 +356,7 @@ pub const DatabaseFamily = struct {
     /// is simply ABSENT from another organization's listing.
     standing: []const u8,
     /// What your licence permits you to do with the data: `evaluation`,
-    /// `internal` or `redistribute`. Null when there is no licence at all, so
+    /// `standard` or `redistribute`. Null when there is no licence at all, so
     /// read the optional before comparing it.
     license_type: ?[]const u8 = null,
     starts: ?[]const u8 = null,
