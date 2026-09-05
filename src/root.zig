@@ -1,9 +1,10 @@
 //! The official Zig client library for the [InternetData](https://internetdata.io)
 //! API: licensed IP and network databases, downloaded as CSV.GZ or MMDB.
 //!
-//! Start with `Client.init`, then `Client.database()`. Every endpoint needs an API key
-//! carrying the `db.download` scope, which is why `Options.api_key` has no
-//! default: there is no anonymous tier to fall back on.
+//! Start with `Client.init`, then `Client.database()`. Every endpoint published
+//! today needs an API key carrying the `db.download` scope, but `Options.api_key`
+//! is optional: a client built without one sends no `Authorization` header
+//! rather than refusing to build.
 //!
 //! ```
 //! var threaded: std.Io.Threaded = .init(gpa, .{});

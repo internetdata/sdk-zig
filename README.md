@@ -24,7 +24,7 @@ Requires Zig **0.16.0**. Zig is pre-1.0 and its standard library still changes s
 
 ## Usage
 
-Every endpoint needs an API key carrying the `db.download` scope, so there is no anonymous tier and `api_key` has no default. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it.
+Every endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a licence.
 
 ```zig
 const std = @import("std");

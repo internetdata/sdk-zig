@@ -57,8 +57,9 @@ pub const Transport = struct {
     /// Without a trailing slash.
     base_url: []const u8,
     /// `Authorization: Bearer <key>`, built once and owned, so a caller is free
-    /// to drop the key it passed in.
-    authorization: []const u8,
+    /// to drop the key it passed in. Null when the client holds no key, and the
+    /// header is then left off entirely rather than sent empty.
+    authorization: ?[]const u8,
 
     /// A response body may not exceed this. The largest thing the API answers
     /// with is a metadata document; anything at this size is a server fault
@@ -151,7 +152,9 @@ pub const Transport = struct {
     }
 
     fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
-        return self.openWith(url, .{ .override = self.authorization }, .default, diag);
+        const authorization: std.http.Client.Request.Headers.Value =
+            if (self.authorization) |value| .{ .override = value } else .omit;
+        return self.openWith(url, authorization, .default, diag);
     }
 
     /// Which content encodings the answer may arrive in. A database transfer

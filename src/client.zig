@@ -12,11 +12,13 @@ const Io = std.Io;
 pub const default_base_url = "https://internetdata.io";
 
 pub const Options = struct {
-    /// A key from the console carrying the `db.download` scope. It has no
-    /// default because there is no anonymous tier to fall back on: every
-    /// endpoint here is behind a licence, so a client without a key can do
-    /// nothing at all and omitting it should not compile.
-    api_key: []const u8,
+    /// A key from the console carrying the `db.download` scope. Optional: a
+    /// client built without one sends no `Authorization` header at all, rather
+    /// than refusing to build. Every endpoint published today is licensed and
+    /// answers 401 without a key, but that is what the API serves rather than a
+    /// property of its shape, and a client that cannot be built keyless would
+    /// have to change its own signature the day a dataset is served free.
+    api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Further attempts a transient failure gets.
     retries: u32 = 2,
@@ -52,15 +54,15 @@ pub const Client = struct {
     transport: http.Transport,
     retries: u32,
 
-    pub const InitError = Allocator.Error || error{ InvalidBaseUrl, MissingApiKey };
+    pub const InitError = Allocator.Error || error{InvalidBaseUrl};
 
     /// `io` is the same `std.Io` implementation the rest of your program uses;
     /// `std.Io.Threaded` is the usual one.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
-        const api_key = std.mem.trim(u8, options.api_key, " \t\r\n");
-        if (api_key.len == 0) {
-            return error.MissingApiKey;
-        }
+        // Empty counts as absent, so a `${{ secrets.MISSING }}` that interpolated
+        // to nothing presents no credential rather than a bearer token of one
+        // space. Whether the key reached the wire is asserted in the suites.
+        const api_key = std.mem.trim(u8, options.api_key orelse "", " \t\r\n");
 
         const base_url = std.mem.trimEnd(u8, options.base_url, "/");
         const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
@@ -74,7 +76,11 @@ pub const Client = struct {
         // Bearer only. A v1 `?apikey=` credential is a different vocabulary the
         // v2 endpoints do not accept, and a key belongs in a header rather than
         // in a query string a proxy will log.
-        const authorization = try std.fmt.allocPrint(gpa, "Bearer {s}", .{api_key});
+        const authorization: ?[]const u8 = if (api_key.len == 0)
+            null
+        else
+            try std.fmt.allocPrint(gpa, "Bearer {s}", .{api_key});
+        errdefer if (authorization) |value| gpa.free(value);
 
         return .{
             .gpa = gpa,
@@ -91,7 +97,9 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         self.transport.deinit();
         self.gpa.free(self.transport.base_url);
-        self.gpa.free(self.transport.authorization);
+        if (self.transport.authorization) |value| {
+            self.gpa.free(value);
+        }
         self.* = undefined;
     }
 
@@ -104,11 +112,14 @@ pub const Client = struct {
     }
 };
 
-test "a client without a key does not build" {
+test "a client builds with no key, an empty one, or a blank one" {
     const gpa = std.testing.allocator;
     var threaded: Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
 
-    try std.testing.expectError(error.MissingApiKey, Client.init(gpa, threaded.io(), .{ .api_key = "" }));
-    try std.testing.expectError(error.MissingApiKey, Client.init(gpa, threaded.io(), .{ .api_key = "  " }));
+    for ([_]?[]const u8{ null, "", "  " }) |api_key| {
+        var client = try Client.init(gpa, threaded.io(), .{ .api_key = api_key });
+        defer client.deinit();
+        try std.testing.expectEqual(@as(?[]const u8, null), client.transport.authorization);
+    }
 }

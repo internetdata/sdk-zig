@@ -43,6 +43,27 @@ test "the API key reaches the wire as a bearer token" {
     try std.testing.expect(std.mem.startsWith(u8, harness.stub.lastUserAgent(), "internetdata-zig/"));
 }
 
+// Today every endpoint is licensed, so a keyless client only ever gets a 401.
+// It still has to BUILD and to send no credential at all: an empty key is what a
+// missing CI secret interpolates to, and `Bearer ` is a worse answer than none.
+test "a keyless client sends no authorization header at all" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/list", .ok("{\"databases\":[]}"));
+
+    for ([_]?[]const u8{ null, "" }) |api_key| {
+        var client = try harness.client(.{ .api_key = api_key });
+        defer client.deinit();
+        (try client.database().list(.{})).deinit();
+    }
+
+    for (harness.stub.seen()) |call| {
+        try std.testing.expectEqualStrings("", call.authorization);
+    }
+    try std.testing.expectEqual(2, harness.stub.callCount());
+}
+
 // A licence covers a FAMILY, and the downloadable ids hang off its versions. A
 // client that reads `base` as an id asks for a database that does not exist.
 test "the catalog unwraps a family and its versions" {
