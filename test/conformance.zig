@@ -77,8 +77,8 @@ test "a closed set the API may extend still parses" {
     try body.appendSlice(arena, "{\"databases\":[");
     var count: usize = 0;
     for (data.value.standings) |standing| {
-        for (data.value.redistribution) |redistribution| {
-            try appendFamily(arena, &body, count, standing, redistribution);
+        for (data.value.license_type) |license_type| {
+            try appendFamily(arena, &body, count, standing, license_type);
             count += 1;
         }
     }
@@ -96,7 +96,7 @@ test "a closed set the API may extend still parses" {
 
     try std.testing.expectEqual(count, catalog.value.len);
     try std.testing.expectEqualStrings("provisional", catalog.value[count - 1].standing);
-    try std.testing.expectEqualStrings("sublicense", catalog.value[count - 1].redistribution.?);
+    try std.testing.expectEqualStrings("sublicense", catalog.value[count - 1].license_type.?);
 }
 
 // A format is the one closed set that is an INPUT, so it IS an enum: a typo
@@ -147,10 +147,10 @@ fn servedAsIs(gpa: std.mem.Allocator) !void {
     try harness.stub.route("/api/v2/database/list", .ok(
         \\{"databases":[
         \\ {"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed",
-        \\  "redistribution":"internal","starts":"2026-09-04T18:04:26.431Z","expires":null,
+        \\  "license_type":"standard","starts":"2026-09-04T18:04:26.431Z","expires":null,
         \\  "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s","formats":["csvgz","mmdb"]}]},
         \\ {"base":"cdn_ip","name":"CDN IP","summary":"s","standing":"unlicensed",
-        \\  "redistribution":null,"starts":null,"expires":null,
+        \\  "license_type":null,"starts":null,"expires":null,
         \\  "versions":[{"id":"cdn_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]},
         \\ {"base":"tor_ip","name":"Tor IP","summary":"s","standing":"unlicensed",
         \\  "versions":[{"id":"tor_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]}]}
@@ -165,14 +165,14 @@ fn servedAsIs(gpa: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("bogon_ip", catalog.value[0].base);
     try std.testing.expectEqualStrings("cdn_ip", catalog.value[1].base);
     try std.testing.expectEqualStrings("tor_ip", catalog.value[2].base);
-    // Not licensed, so no term and no redistribution right. Null rather than a
+    // Not licensed, so no term and no license_type right. Null rather than a
     // stand-in value, which a caller could mistake for a grant.
-    try std.testing.expect(catalog.value[1].redistribution == null);
+    try std.testing.expect(catalog.value[1].license_type == null);
     try std.testing.expect(catalog.value[1].expires == null);
-    try std.testing.expectEqualStrings("internal", catalog.value[0].redistribution.?);
+    try std.testing.expectEqualStrings("standard", catalog.value[0].license_type.?);
     // Sent as null above and left out entirely here. Both mean the same thing,
     // and neither may fall back to a value that reads as a grant.
-    try std.testing.expect(catalog.value[2].redistribution == null);
+    try std.testing.expect(catalog.value[2].license_type == null);
     try std.testing.expect(catalog.value[2].starts == null);
     try std.testing.expect(catalog.value[2].expires == null);
 }
@@ -219,16 +219,16 @@ fn appendFamily(
     body: *std.ArrayList(u8),
     index: usize,
     standing: []const u8,
-    redistribution: []const u8,
+    license_type: []const u8,
 ) !void {
     if (index > 0) {
         try body.append(arena, ',');
     }
     try body.print(arena,
-        \\{{"base":"b{d}","name":"n","summary":"s","standing":"{s}","redistribution":"{s}",
+        \\{{"base":"b{d}","name":"n","summary":"s","standing":"{s}","license_type":"{s}",
         \\ "starts":null,"expires":null,
         \\ "versions":[{{"id":"b{d}_v1","version":1,"summary":"s","formats":["csvgz"]}}]}}
-    , .{ index, standing, redistribution, index });
+    , .{ index, standing, license_type, index });
 }
 
 fn routeFailure(harness: *Harness, path: []const u8, case: corpus.ErrorCase) !void {

@@ -72,7 +72,7 @@ defer catalog.deinit();
 const family = catalog.value[0];
 family.base;                    // bogon_ip - what a licence is held against
 family.standing;                // licensed, expired, or unlicensed
-family.redistribution;          // evaluation, internal, redistribute, or null
+family.license_type;          // evaluation, standard, redistribute, or null
 const id = family.versions[0].id; // bogon_ip_v1 - what you download
 ```
 

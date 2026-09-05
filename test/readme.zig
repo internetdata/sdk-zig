@@ -31,7 +31,7 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
     const family = catalog.value[0];
     _ = family.base;
     _ = family.standing;
-    _ = family.redistribution;
+    _ = family.license_type;
     const id = family.versions[0].id;
 
     const info = try client.database().metadata(id, .{});

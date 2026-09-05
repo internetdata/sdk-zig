@@ -73,7 +73,7 @@ test "the catalog unwraps a family and its versions" {
     try harness.stub.route("/api/v2/database/list", .ok(
         \\{"databases":[{"base":"bogon_ip","name":"Bogon IP",
         \\ "summary":"Reserved, private or otherwise non-routable IP ranges.",
-        \\ "standing":"licensed","redistribution":"internal",
+        \\ "standing":"licensed","license_type":"standard",
         \\ "starts":"2026-09-04T18:04:26.431Z","expires":null,
         \\ "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s",
         \\   "formats":["csvgz","mmdb"]}]}]}

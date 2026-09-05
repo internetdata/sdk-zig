@@ -338,7 +338,7 @@ pub const Database = struct {
 /// `download`, `downloadBytes`, `downloadUrl`, `checksums` and `metadata` take
 /// come from `versions` rather than from here.
 ///
-/// `standing` and `redistribution` stay STRINGS rather than Zig enums: an enum
+/// `standing` and `license_type` stay STRINGS rather than Zig enums: an enum
 /// tag `std.json` does not know fails the WHOLE response, so a value added to
 /// the API after this release would break every older client. A client that
 /// cannot read today's answer is worse than one that cannot name tomorrow's
@@ -358,7 +358,7 @@ pub const DatabaseFamily = struct {
     /// What your licence permits you to do with the data: `evaluation`,
     /// `internal` or `redistribute`. Null when there is no licence at all, so
     /// read the optional before comparing it.
-    redistribution: ?[]const u8 = null,
+    license_type: ?[]const u8 = null,
     starts: ?[]const u8 = null,
     /// Null when the licence has no end date, or when there is none.
     expires: ?[]const u8 = null,

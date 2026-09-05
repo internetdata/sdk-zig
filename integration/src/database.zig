@@ -27,7 +27,7 @@ const format: internetdata.Format = .csvgz;
 const ceiling = 8 << 20;
 
 const standings = [_][]const u8{ "licensed", "expired", "unlicensed" };
-const redistributions = [_][]const u8{ "evaluation", "internal", "redistribute" };
+const license_types = [_][]const u8{ "evaluation", "standard", "redistribute" };
 
 test "the catalogue answers the schema the client was written from" {
     const gpa = std.testing.allocator;
@@ -45,8 +45,8 @@ test "the catalogue answers the schema the client was written from" {
         try std.testing.expect(family.name.len > 0);
         try std.testing.expect(family.summary.len > 0);
         try staging.expectOneOf("standing", family.standing, &standings);
-        if (family.redistribution) |right| {
-            try staging.expectOneOf("redistribution", right, &redistributions);
+        if (family.license_type) |right| {
+            try staging.expectOneOf("license_type", right, &license_types);
         }
         // The point of the family shape: a licence covers the family, and these
         // are the ids the download, checksum and metadata calls take.
@@ -91,8 +91,8 @@ test "the listing is returned exactly as served" {
         // Null on the wire has to stay null here: a licence term the client
         // invents reads as a grant nobody signed.
         try std.testing.expectEqual(
-            raw.object.get("redistribution").? == .null,
-            family.redistribution == null,
+            raw.object.get("license_type").? == .null,
+            family.license_type == null,
         );
     }
 }

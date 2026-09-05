@@ -18,7 +18,7 @@ pub const Corpus = struct {
     /// modelled as Zig enums: an unknown tag fails the whole response to parse,
     /// so a value added after this release would break every older client.
     standings: []const []const u8,
-    redistribution: []const []const u8,
+    license_type: []const []const u8,
     formats: []const []const u8,
     visibility: Visibility,
 };
