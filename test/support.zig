@@ -332,7 +332,7 @@ pub fn payload(harness: *Harness) ![]const u8 {
 }
 
 /// A scratch directory for a test that needs a real PATH rather than a directory
-/// handle, which `Client.download` does.
+/// handle, which `Database.download` does.
 ///
 /// Do not copy one after `start`: `path` hands back a slice of its own buffer.
 pub const Scratch = struct {
