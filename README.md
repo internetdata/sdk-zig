@@ -1,4 +1,4 @@
-# [<img src="https://docs.internetdata.io/logo.svg" alt="InternetData" width="24"/>](https://internetdata.io/) InternetData Zig Client Library
+# [<img src="https://s3.internetdata.io/internetdata-public/brand/mark.svg" alt="InternetData" width="24"/>](https://internetdata.io/) InternetData Zig Client Library
 
 [![CI](https://github.com/internetdata/sdk-zig/actions/workflows/ci.yml/badge.svg)](https://github.com/internetdata/sdk-zig/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/internetdata/sdk-zig.svg)](LICENSE)
@@ -173,7 +173,7 @@ There are official InternetData client libraries available for many languages in
 
 InternetData: licensed IP and network intelligence databases covering VPN, proxy, hosting, CDN, relay and Tor address space, published daily as CSV.GZ and MMDB.
 
-[<img src="https://docs.internetdata.io/logo.svg" alt="InternetData" width="96"/>](https://internetdata.io/)
+[<img src="https://s3.internetdata.io/internetdata-public/brand/mark.svg" alt="InternetData" width="96"/>](https://internetdata.io/)
 
 ## License
 
