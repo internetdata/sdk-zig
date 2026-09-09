@@ -362,6 +362,13 @@ pub const DatabaseFamily = struct {
     starts: ?[]const u8 = null,
     /// Null when the licence has no end date, or when there is none.
     expires: ?[]const u8 = null,
+    /// When a rolling licence next renews. Null when the licence has no defined
+    /// term, when `expires` sets a hard stop instead, and when there is none.
+    renews_at: ?[]const u8 = null,
+    /// The last day notice of non-renewal can be given for the term ending at
+    /// `renews_at`. Null whenever that is, and when the agreement records no
+    /// notice period.
+    notice_due_at: ?[]const u8 = null,
     /// Every published version of this family, oldest first. Old versions are
     /// frozen rather than migrated, so both stay downloadable.
     versions: []const DatabaseVersion,
