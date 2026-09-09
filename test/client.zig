@@ -74,7 +74,7 @@ test "the catalog unwraps a family and its versions" {
         \\{"databases":[{"base":"bogon_ip","name":"Bogon IP",
         \\ "summary":"Reserved, private or otherwise non-routable IP ranges.",
         \\ "standing":"licensed","license_type":"standard",
-        \\ "starts":"2026-09-04T18:04:26.431Z","expires":null,
+        \\ "starts":"2026-09-04T18:04:26.431Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\ "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s",
         \\   "formats":["csvgz","mmdb"]}]}]}
     ));

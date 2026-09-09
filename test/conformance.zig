@@ -147,10 +147,10 @@ fn servedAsIs(gpa: std.mem.Allocator) !void {
     try harness.stub.route("/api/v2/database/list", .ok(
         \\{"databases":[
         \\ {"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed",
-        \\  "license_type":"standard","starts":"2026-09-04T18:04:26.431Z","expires":null,
+        \\  "license_type":"standard","starts":"2026-09-04T18:04:26.431Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\  "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s","formats":["csvgz","mmdb"]}]},
         \\ {"base":"cdn_ip","name":"CDN IP","summary":"s","standing":"unlicensed",
-        \\  "license_type":null,"starts":null,"expires":null,
+        \\  "license_type":null,"starts":null,"expires":null,"renews_at":null,"notice_due_at":null,
         \\  "versions":[{"id":"cdn_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]},
         \\ {"base":"tor_ip","name":"Tor IP","summary":"s","standing":"unlicensed",
         \\  "versions":[{"id":"tor_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]}]}
@@ -226,7 +226,7 @@ fn appendFamily(
     }
     try body.print(arena,
         \\{{"base":"b{d}","name":"n","summary":"s","standing":"{s}","license_type":"{s}",
-        \\ "starts":null,"expires":null,
+        \\ "starts":null,"expires":null,"renews_at":null,"notice_due_at":null,
         \\ "versions":[{{"id":"b{d}_v1","version":1,"summary":"s","formats":["csvgz"]}}]}}
     , .{ index, standing, license_type, index });
 }
