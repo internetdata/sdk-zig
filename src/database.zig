@@ -51,21 +51,21 @@ pub const DownloadError = errors.CallError ||
 /// answer, so `deinit` is the entire cleanup; `downloadUrl` and `downloadBytes`
 /// return slices allocated with the allocator you gave `Client.init` and owned
 /// by you.
-pub const Database = struct {
+pub const DatabaseApi = struct {
     client: *client_mod.Client,
 
     /// The published catalog, with your organization's licence beside each
     /// family. The caller owns the result and must `deinit` it.
     ///
     /// A licence covers a family, so the id you pass to a download is one of
-    /// `DatabaseFamily.versions`, not `DatabaseFamily.base`.
+    /// `Database.versions`, not `Database.base`.
     ///
     /// **This is the SERVER's answer about YOUR key, and nothing else assembles
     /// it.** A database commissioned for a single customer is ABSENT for every
     /// other organization rather than listed with an `unlicensed` standing, so
     /// what you get back is not necessarily what another key gets back, and
     /// neither the catalog nor any part of it can be reconstructed elsewhere.
-    pub fn list(self: Database, options: client_mod.CallOptions) CallError!Parsed([]const DatabaseFamily) {
+    pub fn list(self: DatabaseApi, options: client_mod.CallOptions) CallError!Parsed([]const Database) {
         const answer = try self.fetch(DatabaseList, "/api/v2/database/list", &.{}, options);
         return .{ .arena = answer.arena, .value = answer.value.databases };
     }
@@ -80,7 +80,7 @@ pub const Database = struct {
     /// One document describes every format the database is built in, which is
     /// why there is no format argument.
     pub fn metadata(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         options: client_mod.CallOptions,
     ) CallError!Parsed(DatabaseMetadata) {
@@ -95,7 +95,7 @@ pub const Database = struct {
     /// `checksums` in the response, and reading a top-level `sha256` is how the
     /// Node SDK shipped this broken in 1.0.x.
     pub fn checksums(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
@@ -116,7 +116,7 @@ pub const Database = struct {
     /// Your organization's recent download attempts, newest first. Null takes
     /// the API's own default of 50, and it is clamped to 200.
     pub fn downloads(
-        self: Database,
+        self: DatabaseApi,
         limit: ?u32,
         options: client_mod.CallOptions,
     ) CallError!Parsed([]const DownloadAttempt) {
@@ -146,7 +146,7 @@ pub const Database = struct {
     /// authorizes the START of a transfer, so one already running is not
     /// interrupted when it lapses.
     pub fn downloadUrl(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
@@ -182,7 +182,7 @@ pub const Database = struct {
     /// `retries` applies to reaching the API for the link, not to the transfer:
     /// resuming a half-moved gigabyte is a different problem from asking again.
     pub fn download(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         path: []const u8,
@@ -239,7 +239,7 @@ pub const Database = struct {
     /// Byte for byte the same file `download` writes, and short of the declared
     /// length is the same error here as there.
     pub fn downloadBytes(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
@@ -275,7 +275,7 @@ pub const Database = struct {
 
     /// Asks the API for the presigned link and opens it.
     fn begin(
-        self: Database,
+        self: DatabaseApi,
         transfer: *http.Transfer,
         options: client_mod.CallOptions,
         id: []const u8,
@@ -291,7 +291,7 @@ pub const Database = struct {
     }
 
     fn fetch(
-        self: Database,
+        self: DatabaseApi,
         comptime T: type,
         path: []const u8,
         query: []const Param,
@@ -343,7 +343,7 @@ pub const Database = struct {
 /// the API after this release would break every older client. A client that
 /// cannot read today's answer is worse than one that cannot name tomorrow's
 /// value.
-pub const DatabaseFamily = struct {
+pub const Database = struct {
     /// The family, e.g. `bogon_ip`. What a licence is held against.
     base: []const u8,
     name: []const u8,
@@ -448,7 +448,7 @@ pub const DownloadAttempt = struct {
 
 /// The envelopes the list endpoints wrap their arrays in, unwrapped one level
 /// before a caller ever sees them.
-pub const DatabaseList = struct { databases: []const DatabaseFamily };
+pub const DatabaseList = struct { databases: []const Database };
 pub const DownloadList = struct { downloads: []const DownloadAttempt };
 
 /// The digests hang under a `checksums` key rather than sitting at the top level

@@ -214,7 +214,7 @@ test "the download history answers the documented shape" {
 /// A real catalogue id this organization holds no licence for, taken from the
 /// listing rather than hardcoded so the suite cannot name one it should not and
 /// cannot rot when a licence changes.
-fn firstUnlicensed(catalog: []const internetdata.DatabaseFamily) ?[]const u8 {
+fn firstUnlicensed(catalog: []const internetdata.Database) ?[]const u8 {
     for (catalog) |family| {
         if (std.mem.eql(u8, family.standing, "unlicensed") and family.versions.len > 0) {
             return family.versions[family.versions.len - 1].id;

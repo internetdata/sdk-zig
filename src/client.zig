@@ -107,7 +107,7 @@ pub const Client = struct {
     ///
     /// A namespace over one domain rather than several, kept because the
     /// sibling VPNDetection client spells the same seven calls the same way.
-    pub fn database(self: *Client) database_mod.Database {
+    pub fn database(self: *Client) database_mod.DatabaseApi {
         return .{ .client = self };
     }
 };

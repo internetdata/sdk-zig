@@ -41,8 +41,8 @@ pub const Options = @import("client.zig").Options;
 pub const default_base_url = @import("client.zig").default_base_url;
 
 pub const Checksums = @import("database.zig").Checksums;
+pub const DatabaseApi = @import("database.zig").DatabaseApi;
 pub const Database = @import("database.zig").Database;
-pub const DatabaseFamily = @import("database.zig").DatabaseFamily;
 pub const DatabaseMetadata = @import("database.zig").DatabaseMetadata;
 pub const DatabaseMetadataColumn = @import("database.zig").DatabaseMetadataColumn;
 pub const DatabaseVersion = @import("database.zig").DatabaseVersion;
