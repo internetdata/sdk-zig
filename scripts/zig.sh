@@ -38,12 +38,21 @@ if ! docker image inspect "$ZIG_IMAGE" >/dev/null 2>&1 ; then
         -f scripts/Dockerfile scripts >&2
 fi
 
+# Every exported INTERNETDATA_* variable is forwarded by NAME, rather than a list
+# of them spelled out here. `-e NAME` with no `=` takes the value from this
+# environment, so an unset one stays unset inside rather than arriving as the
+# empty string. The integration suite owns which credentials it wants; this
+# wrapper only has to not lose them.
+env_args=()
+for name in $(compgen -e | grep '^INTERNETDATA_' || true) ; do
+    env_args+=(-e "$name")
+done
+
 exec docker run --rm -i \
     -v "$PWD:/work" \
     -v "${ZIG_CACHE_VOLUME}:/zig-cache" \
     -e ZIG_LOCAL_CACHE_DIR=/zig-cache/local \
     -e ZIG_GLOBAL_CACHE_DIR=/zig-cache/global \
-    -e INTERNETDATA_API_KEY="${INTERNETDATA_API_KEY:-}" \
-    -e INTERNETDATA_STAGING_KEY="${INTERNETDATA_STAGING_KEY:-}" \
+    "${env_args[@]+"${env_args[@]}"}" \
     -w "/work${ZIG_WORKDIR:+/$ZIG_WORKDIR}" \
     "$ZIG_IMAGE" "$@"
