@@ -34,10 +34,10 @@ import sys
 
 spec_path, model_path = sys.argv[1], sys.argv[2]
 
-# <spec schema>: <zig struct>. They differ in one place only: `Database` would
-# collide with the client method that returns it.
+# <spec schema>: <zig struct>. Only `DbChecksums` and `Download` are spelled
+# differently in the model; the rest carry the spec's own name.
 PAIRS = {
-    "Database": "DatabaseFamily",
+    "Database": "Database",
     "DatabaseVersion": "DatabaseVersion",
     "DatabaseMetadata": "DatabaseMetadata",
     "DatabaseMetadataColumn": "DatabaseMetadataColumn",
