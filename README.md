@@ -10,7 +10,7 @@ The library helps you browse and download InternetData's licensed IP and network
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.0.0
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.0.1
 ```
 
 Then add the module to whatever you are building, in `build.zig`:

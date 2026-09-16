@@ -7,7 +7,7 @@ const CallError = errors.CallError;
 const Diagnostics = errors.Diagnostics;
 const Io = std.Io;
 
-const retry_base_delay: Io.Duration = .fromMilliseconds(250);
+pub const retry_base_delay: Io.Duration = .fromMilliseconds(250);
 const retry_max_delay: Io.Duration = .fromSeconds(30);
 
 /// One request, and what to do if it fails.
@@ -36,18 +36,25 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
         if (attempt) |body| {
             return body;
         } else |err| {
-            if (remaining == 0 or !errors.isRetryable(err)) {
+            if (remaining == 0 or !errors.isRetryable(err) or !backOff(io, diag, &delay)) {
                 return err;
             }
-            const wait: Io.Duration = if (diag.retry_after_s) |seconds|
-                .fromSeconds(@intCast(seconds))
-            else
-                delay;
-            io.sleep(wait, .awake) catch return err;
-            delay = .fromNanoseconds(@min(delay.nanoseconds * 2, retry_max_delay.nanoseconds));
             remaining -= 1;
         }
     }
+}
+
+/// Waits before another attempt: whatever the server asked for, over the
+/// caller's own doubling backoff. False when the wait was canceled, which ends
+/// the retries rather than being ignored.
+pub fn backOff(io: Io, diag: *const Diagnostics, delay: *Io.Duration) bool {
+    const wait: Io.Duration = if (diag.retry_after_s) |seconds|
+        .fromSeconds(@intCast(seconds))
+    else
+        delay.*;
+    io.sleep(wait, .awake) catch return false;
+    delay.* = .fromNanoseconds(@min(delay.nanoseconds * 2, retry_max_delay.nanoseconds));
+    return true;
 }
 
 /// Every request the library makes: five GET operations with no request bodies,

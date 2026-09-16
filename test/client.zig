@@ -425,6 +425,70 @@ test "a transfer that stops short fails and leaves nothing behind" {
     );
 }
 
+// Only the header phase of a transfer retries: object storage failing with a 5xx
+// before any byte has moved is asked again.
+test "an object storage 5xx before the first byte is retried" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const body = try support.payload(harness);
+    try support.routeDownload(harness, .ok(body));
+    const arena = harness.stub.arena.allocator();
+    try harness.stub.sequence(storage_path, try arena.dupe(Route, &.{ .{ .status = 503 }, .ok(body) }));
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key" });
+    defer client.deinit();
+    const written = try client.database().download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+
+    try std.testing.expectEqual(2, storageRequests(harness));
+    try std.testing.expectEqual(body.len, written);
+    var read_buffer: [64_000]u8 = undefined;
+    try std.testing.expectEqualSlices(u8, body, try scratch.read("data.csv.gz", &read_buffer));
+}
+
+// A body that dies part way is NEVER fetched again: a second copy would land
+// behind the bytes already moved. Paired with the 503 test above, so neither
+// count can pass by accident.
+test "a transfer that dies part way is never fetched again" {
+    const gpa = std.testing.allocator;
+    for ([_]bool{ true, false }) |to_disk| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try support.routeDownload(harness, .{ .body = "0123456789abcdef", .promised_length = 40_000 });
+
+        var scratch = support.Scratch.start();
+        defer scratch.deinit();
+
+        var client = try harness.client(.{ .api_key = "key", .retries = 3 });
+        defer client.deinit();
+        if (to_disk) {
+            try std.testing.expectError(
+                error.Network,
+                client.database().download("bogon_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{}),
+            );
+        } else {
+            try std.testing.expectError(error.Network, client.database().downloadBytes("bogon_ip_v1", .csvgz, .{}));
+        }
+        std.testing.expectEqual(1, storageRequests(harness)) catch |err| {
+            std.debug.print("the dead transfer was fetched again (to disk: {})\n", .{to_disk});
+            return err;
+        };
+    }
+}
+
+fn storageRequests(harness: *Harness) usize {
+    var count: usize = 0;
+    for (harness.stub.seen()) |call| {
+        if (std.mem.eql(u8, call.path, storage_path)) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
 // A licence refusal is the API saying no, not a wobble: retrying it spends quota
 // to be told the same thing again.
 test "a database the organization does not license is refused once" {

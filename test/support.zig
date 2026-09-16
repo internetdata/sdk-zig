@@ -56,6 +56,7 @@ pub const Stub = struct {
     connections: Io.Group = .init,
     mutex: Io.Mutex = .init,
     routes: std.StringArrayHashMapUnmanaged(Route) = .empty,
+    sequences: std.StringArrayHashMapUnmanaged(Sequence) = .empty,
     calls: std.ArrayList(Call) = .empty,
     /// The last `User-Agent` header seen.
     user_agent: []const u8 = "",
@@ -89,6 +90,7 @@ pub const Stub = struct {
         self.server.deinit(self.io);
 
         self.routes.deinit(self.gpa);
+        self.sequences.deinit(self.gpa);
         self.calls.deinit(self.gpa);
         self.arena.deinit();
         const gpa = self.gpa;
@@ -103,6 +105,15 @@ pub const Stub = struct {
     pub fn route(self: *Stub, path: []const u8, value: Route) !void {
         const gop = try self.routes.getOrPut(self.gpa, try self.own(path));
         gop.value_ptr.* = value;
+    }
+
+    /// Answers `path` with these responses in order, ahead of any route. Once
+    /// they run out every further request there is a 599, so an extra attempt
+    /// is counted and fails rather than picking up an answer meant for another.
+    /// The slice must outlive the stub: build it in the stub's arena.
+    pub fn sequence(self: *Stub, path: []const u8, values: []const Route) !void {
+        const gop = try self.sequences.getOrPut(self.gpa, try self.own(path));
+        gop.value_ptr.* = .{ .routes = values };
     }
 
     pub fn own(self: *Stub, text: []const u8) ![]const u8 {
@@ -192,8 +203,20 @@ fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
         .accept_encoding = ownedHeader(self, head, "accept-encoding"),
     }) catch {};
     self.user_agent = ownedHeader(self, head, "user-agent");
+    if (self.sequences.getPtr(path)) |queue| {
+        if (queue.next == queue.routes.len) {
+            return .{ .status = 599, .body = "{\"stub\":\"exhausted\"}" };
+        }
+        queue.next += 1;
+        return queue.routes[queue.next - 1];
+    }
     return self.routes.get(path);
 }
+
+const Sequence = struct {
+    routes: []const Route,
+    next: usize = 0,
+};
 
 fn ownedHeader(self: *Stub, head: []const u8, name: []const u8) []const u8 {
     const value = headerValue(head, name) orelse return "";
