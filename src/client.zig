@@ -34,6 +34,8 @@ pub const Options = struct {
 /// client's setting.
 pub const CallOptions = struct {
     retries: ?u32 = null,
+    /// This call's own `Options.timeout`, longer or shorter.
+    timeout: ?Io.Duration = null,
     /// Filled in with the status, the wait and the API's own result code when
     /// the call fails. A Zig error carries no payload, so this is how the detail
     /// behind one is reached.

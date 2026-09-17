@@ -79,4 +79,6 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
 
     var bounded = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
     defer bounded.deinit();
+    const quick = try bounded.database().list(.{ .timeout = .fromMilliseconds(500) });
+    defer quick.deinit();
 }

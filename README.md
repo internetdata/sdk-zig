@@ -10,7 +10,7 @@ The library helps you browse and download InternetData's licensed IP and network
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.1.0
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.2.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -165,14 +165,17 @@ Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not 
 
 ### Timeouts
 
-Each attempt of a call gets 30 seconds by default, from connecting to the last byte of the answer. Set your own with `timeout`:
+Each attempt of a call gets 30 seconds by default, from connecting to the last byte of the answer. Set your own with `timeout`, on the client or on a single call:
 
 ```zig
 var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
 defer client.deinit();
+
+const quick = try client.database().list(.{ .timeout = .fromMilliseconds(500) });
+defer quick.deinit();
 ```
 
-A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way.
+A call's own value replaces the client's, longer or shorter. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way.
 
 The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
 

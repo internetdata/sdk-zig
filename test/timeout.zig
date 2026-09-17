@@ -1,6 +1,6 @@
-//! The client's per-attempt timeout, on real sockets: a body that stalls after
-//! its head, one trickled a byte at a time, every call against it, a download
-//! that outlives the bound, and what cancelation leaves behind.
+//! The per-attempt timeout, on real sockets: a body that stalls after its head,
+//! one trickled a byte at a time, the per-call value against the client's, a
+//! download that outlives the bound, and what cancelation leaves behind.
 
 const std = @import("std");
 const internetdata = @import("internetdata");
@@ -36,7 +36,7 @@ test "a trickled body times out at the bound and its connection is dropped" {
 
     var diagnostics: Diagnostics = .{};
     const start = Io.Clock.awake.now(harness.io());
-    const outcome = listOnce(&client, &diagnostics);
+    const outcome = listOnce(&client, .{ .diagnostics = &diagnostics });
     const took_ms = since(harness, start);
     try expectTimedOut("trickled body", outcome, &diagnostics, took_ms, 250, 250 + slack_ms);
 
@@ -60,32 +60,67 @@ test "a body that stalls after its head times out at the client's bound" {
 
     var diagnostics: Diagnostics = .{};
     const start = Io.Clock.awake.now(harness.io());
-    const outcome = listOnce(&client, &diagnostics);
+    const outcome = listOnce(&client, .{ .diagnostics = &diagnostics });
     const took_ms = since(harness, start);
     try expectTimedOut("stalled body", outcome, &diagnostics, took_ms, 250, 250 + slack_ms);
     try std.testing.expectEqual(1, harness.stub.callCount());
 }
 
-// Each call against the one path it stalls, with a bound far below the 30 s
-// default, so a call that ignores the client's value fails on elapsed time.
-test "every call honors the client's timeout" {
+// The client's own bound is well above the call's, so a call that ignores its
+// value fails on elapsed time; the second call then shows the first did not
+// leave its value behind.
+test "a per-call timeout below the client's fires, and the next call keeps the client's" {
     const gpa = std.testing.allocator;
-    for (std.meta.tags(Call)) |call| {
-        const harness = try Harness.start(gpa);
-        defer harness.deinit();
-        try call.stall(harness);
-        var client = try harness.client(.{
-            .api_key = "key",
-            .retries = 0,
-            .timeout = .fromMilliseconds(250),
-        });
-        defer client.deinit();
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route(list_path, stalledBody(list_body));
+    var client = try harness.client(.{ .retries = 0, .timeout = .fromMilliseconds(1000) });
+    defer client.deinit();
 
-        var diagnostics: Diagnostics = .{};
-        const start = Io.Clock.awake.now(harness.io());
-        const outcome = call.run(&client, &diagnostics);
-        const took_ms = since(harness, start);
-        try expectTimedOut(@tagName(call), outcome, &diagnostics, took_ms, 250, 250 + slack_ms);
+    var diagnostics: Diagnostics = .{};
+    var start = Io.Clock.awake.now(harness.io());
+    var outcome = listOnce(&client, .{ .timeout = .fromMilliseconds(250), .diagnostics = &diagnostics });
+    var took_ms = since(harness, start);
+    try expectTimedOut("per-call value", outcome, &diagnostics, took_ms, 250, 900);
+
+    start = Io.Clock.awake.now(harness.io());
+    outcome = listOnce(&client, .{ .diagnostics = &diagnostics });
+    took_ms = since(harness, start);
+    try expectTimedOut("client value after it", outcome, &diagnostics, took_ms, 1000, 1000 + slack_ms);
+}
+
+// Each call against the one path it stalls, first on the client's bound, then
+// on its own below a client's far above it, so a call that ignores either value
+// fails on elapsed time.
+test "every call honors the client's timeout and its own" {
+    const gpa = std.testing.allocator;
+    for ([_]bool{ false, true }) |per_call| {
+        for (std.meta.tags(Call)) |call| {
+            const harness = try Harness.start(gpa);
+            defer harness.deinit();
+            try call.stall(harness);
+            var client = try harness.client(.{
+                .api_key = "key",
+                .retries = 0,
+                .timeout = .fromMilliseconds(if (per_call) 2000 else 250),
+            });
+            defer client.deinit();
+
+            var diagnostics: Diagnostics = .{};
+            const options: internetdata.CallOptions = .{
+                .timeout = if (per_call) .fromMilliseconds(250) else null,
+                .diagnostics = &diagnostics,
+            };
+            const start = Io.Clock.awake.now(harness.io());
+            const outcome = call.run(&client, options);
+            const took_ms = since(harness, start);
+            var name_buffer: [64]u8 = undefined;
+            const name = try std.fmt.bufPrint(&name_buffer, "{s}{s}", .{
+                @tagName(call),
+                if (per_call) " per call" else "",
+            });
+            try expectTimedOut(name, outcome, &diagnostics, took_ms, 250, 250 + slack_ms);
+        }
     }
 }
 
@@ -134,7 +169,10 @@ test "a download that runs past the timeout still completes" {
     try std.testing.expectEqualSlices(u8, body, try scratch.read("data.csv.gz", &read_buffer));
 
     start = Io.Clock.awake.now(harness.io());
-    const options: internetdata.CallOptions = .{ .diagnostics = &diagnostics };
+    const options: internetdata.CallOptions = .{
+        .timeout = .fromMilliseconds(150),
+        .diagnostics = &diagnostics,
+    };
     const bytes = client.database().downloadBytes("bogon_ip_v1", .csvgz, options) catch |err| {
         std.debug.print("downloadBytes failed after {d} ms: {s} {s}\n", .{
             since(harness, start), @errorName(err), diagnostics.message(),
@@ -189,13 +227,15 @@ test "a call completes on an Io that cannot start a concurrent task" {
     try std.testing.expectEqual(0, catalog.value.len);
 }
 
-/// Every call, by the path its request goes to.
+/// Every call, by the path its request goes to. `download_link` stalls the
+/// API's answer to a download rather than object storage's.
 const Call = enum {
     list,
     metadata,
     checksums,
     downloads,
     download_url,
+    download_link,
     download,
     download_bytes,
 
@@ -206,15 +246,14 @@ const Call = enum {
             .metadata => try stub.route("/api/v2/database/metadata", stalledBody("{\"id\":\"x\"}")),
             .checksums => try stub.route("/api/v2/database/checksum", stalledBody("{\"id\":\"x\"}")),
             .downloads => try stub.route("/api/v2/database/downloads", stalledBody("{\"downloads\":[]}")),
-            .download_url => try stub.route("/api/v2/database/download", stalledHead()),
+            .download_url, .download_link => try stub.route("/api/v2/database/download", stalledHead()),
             .download, .download_bytes => try support.routeDownload(harness, stalledHead()),
         }
     }
 
     /// Makes the call, freeing whatever it answers: an answer is the failure
     /// here, and the caller reports it.
-    fn run(call: Call, client: *internetdata.Client, diag: *Diagnostics) anyerror!void {
-        const options: internetdata.CallOptions = .{ .diagnostics = diag };
+    fn run(call: Call, client: *internetdata.Client, options: internetdata.CallOptions) anyerror!void {
         const database = client.database();
         switch (call) {
             .list => (try database.list(options)).deinit(),
@@ -222,7 +261,7 @@ const Call = enum {
             .checksums => (try database.checksums("x", .mmdb, options)).deinit(),
             .downloads => (try database.downloads(null, options)).deinit(),
             .download_url => client.gpa.free(try database.downloadUrl("x", .mmdb, options)),
-            .download => {
+            .download, .download_link => {
                 var scratch = support.Scratch.start();
                 defer scratch.deinit();
                 _ = try database.download("x", .mmdb, scratch.path("x.mmdb"), options);
@@ -259,8 +298,8 @@ fn expectTimedOut(
     }
 }
 
-fn listOnce(client: *internetdata.Client, diag: *Diagnostics) anyerror!void {
-    const catalog = try client.database().list(.{ .diagnostics = diag });
+fn listOnce(client: *internetdata.Client, options: internetdata.CallOptions) anyerror!void {
+    const catalog = try client.database().list(options);
     catalog.deinit();
 }
 
