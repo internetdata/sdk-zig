@@ -54,10 +54,10 @@ pub const DownloadError = errors.CallError ||
 pub const DatabaseApi = struct {
     client: *client_mod.Client,
 
-    /// The published catalog, with your organization's licence beside each
+    /// The published catalog, with your organization's license beside each
     /// family. The caller owns the result and must `deinit` it.
     ///
-    /// A licence covers a family, so the id you pass to a download is one of
+    /// A license covers a family, so the id you pass to a download is one of
     /// `Database.versions`, not `Database.base`.
     ///
     /// **This is the SERVER's answer about YOUR key, and nothing else assembles
@@ -358,7 +358,7 @@ pub const DatabaseApi = struct {
 /// Mirrors `components.schemas.Database` in spec/openapi.yaml, renamed only
 /// because `Database` is the API surface `Client.database()` returns.
 ///
-/// One database FAMILY, with your organization's licence beside it. A licence
+/// One database FAMILY, with your organization's license beside it. A license
 /// covers the family, while a download names one version of it, so the ids
 /// `download`, `downloadBytes`, `downloadUrl`, `checksums` and `metadata` take
 /// come from `versions` rather than from here.
@@ -369,7 +369,7 @@ pub const DatabaseApi = struct {
 /// cannot read today's answer is worse than one that cannot name tomorrow's
 /// value.
 pub const Database = struct {
-    /// The family, e.g. `bogon_ip`. What a licence is held against.
+    /// The family, e.g. `bogon_ip`. What a license is held against.
     base: []const u8,
     name: []const u8,
     /// One line on what the newest version contains.
@@ -380,14 +380,14 @@ pub const Database = struct {
     /// It never says a database does not exist. A family built for one customer
     /// is simply ABSENT from another organization's listing.
     standing: []const u8,
-    /// What your licence permits you to do with the data: `evaluation`,
-    /// `standard` or `redistribute`. Null when there is no licence at all, so
+    /// What your license permits you to do with the data: `evaluation`,
+    /// `standard` or `redistribute`. Null when there is no license at all, so
     /// read the optional before comparing it.
     license_type: ?[]const u8 = null,
     starts: ?[]const u8 = null,
-    /// Null when the licence has no end date, or when there is none.
+    /// Null when the license has no end date, or when there is none.
     expires: ?[]const u8 = null,
-    /// When a rolling licence next renews. Null when the licence has no defined
+    /// When a rolling license next renews. Null when the license has no defined
     /// term, when `expires` sets a hard stop instead, and when there is none.
     renews_at: ?[]const u8 = null,
     /// The last day notice of non-renewal can be given for the term ending at

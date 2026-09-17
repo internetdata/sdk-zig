@@ -7,7 +7,7 @@
 //!
 //! Nothing here names a database this organization is not licensed for. The
 //! unlicensed id a refusal is asserted against is picked out of the listing at
-//! run time, so the suite cannot rot when a licence changes and cannot publish a
+//! run time, so the suite cannot rot when a license changes and cannot publish a
 //! customer relationship the API deliberately hides.
 
 const std = @import("std");
@@ -48,7 +48,7 @@ test "the catalogue answers the schema the client was written from" {
         if (family.license_type) |right| {
             try staging.expectOneOf("license_type", right, &license_types);
         }
-        // The point of the family shape: a licence covers the family, and these
+        // The point of the family shape: a license covers the family, and these
         // are the ids the download, checksum and metadata calls take.
         try std.testing.expect(family.versions.len > 0);
         for (family.versions) |version| {
@@ -63,7 +63,7 @@ test "the catalogue answers the schema the client was written from" {
 
 // The listing is the server's answer about this key, and the client must hand it
 // back unchanged. Adding an entry would advertise a database this key may not
-// see; dropping one would hide a licence it holds. Compared against the bytes
+// see; dropping one would hide a license it holds. Compared against the bytes
 // the proxy recorded, so the check does not go through the same model it tests.
 test "the listing is returned exactly as served" {
     const gpa = std.testing.allocator;
@@ -88,7 +88,7 @@ test "the listing is returned exactly as served" {
     for (items, catalog.value) |raw, family| {
         try std.testing.expectEqualStrings(raw.object.get("base").?.string, family.base);
         try std.testing.expectEqualStrings(raw.object.get("standing").?.string, family.standing);
-        // Null on the wire has to stay null here: a licence term the client
+        // Null on the wire has to stay null here: a license term the client
         // invents reads as a grant nobody signed.
         try std.testing.expectEqual(
             raw.object.get("license_type").? == .null,
@@ -97,7 +97,7 @@ test "the listing is returned exactly as served" {
     }
 }
 
-// A licence refusal is the API saying no, not a wobble: retrying it spends quota
+// A license refusal is the API saying no, not a wobble: retrying it spends quota
 // to be told the same thing again.
 test "a database the organization does not license is refused once" {
     const gpa = std.testing.allocator;
@@ -189,7 +189,7 @@ test "a real database moves intact, in memory and on disk" {
     try std.testing.expectEqualSlices(u8, bytes, in_memory);
 }
 
-// Refusals are listed too, so the entry a licence refusal just produced is what
+// Refusals are listed too, so the entry a license refusal just produced is what
 // answers "it stopped working". This runs last of the download tests only in the
 // sense that it does not depend on them: the history may legitimately be empty.
 test "the download history answers the documented shape" {
@@ -211,9 +211,9 @@ test "the download history answers the documented shape" {
     std.debug.print("{d} recent download attempt(s)\n", .{history.value.len});
 }
 
-/// A real catalogue id this organization holds no licence for, taken from the
+/// A real catalogue id this organization holds no license for, taken from the
 /// listing rather than hardcoded so the suite cannot name one it should not and
-/// cannot rot when a licence changes.
+/// cannot rot when a license changes.
 fn firstUnlicensed(catalog: []const internetdata.Database) ?[]const u8 {
     for (catalog) |family| {
         if (std.mem.eql(u8, family.standing, "unlicensed") and family.versions.len > 0) {

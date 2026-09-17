@@ -64,7 +64,7 @@ test "a keyless client sends no authorization header at all" {
     try std.testing.expectEqual(2, harness.stub.callCount());
 }
 
-// A licence covers a FAMILY, and the downloadable ids hang off its versions. A
+// A license covers a FAMILY, and the downloadable ids hang off its versions. A
 // client that reads `base` as an id asks for a database that does not exist.
 test "the catalog unwraps a family and its versions" {
     const gpa = std.testing.allocator;
@@ -489,7 +489,7 @@ fn storageRequests(harness: *Harness) usize {
     return count;
 }
 
-// A licence refusal is the API saying no, not a wobble: retrying it spends quota
+// A license refusal is the API saying no, not a wobble: retrying it spends quota
 // to be told the same thing again.
 test "a database the organization does not license is refused once" {
     const gpa = std.testing.allocator;

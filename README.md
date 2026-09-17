@@ -24,7 +24,7 @@ Requires Zig **0.16.0**. Zig is pre-1.0 and its standard library still changes s
 
 ## Usage
 
-Every endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a licence.
+Every endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a license.
 
 ```zig
 const std = @import("std");
@@ -63,14 +63,14 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### The catalog
 
-A licence covers a database *family*, and a download names one of its versions, so the id you pass to everything else comes from `versions`:
+A license covers a database *family*, and a download names one of its versions, so the id you pass to everything else comes from `versions`:
 
 ```zig
 const catalog = try client.database().list(.{});
 defer catalog.deinit();
 
 const family = catalog.value[0];
-family.base;                    // bogon_ip - what a licence is held against
+family.base;                    // bogon_ip - what a license is held against
 family.standing;                // licensed, expired, or unlicensed
 family.license_type;          // evaluation, standard, redistribute, or null
 const id = family.versions[0].id; // bogon_ip_v1 - what you download
