@@ -10,7 +10,7 @@ The library helps you browse and download InternetData's licensed IP and network
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.0.1
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.1.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -162,6 +162,19 @@ const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
 Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded. Nothing else in the 4xx range is retried at all: a misspelled database id is a 404, and asking for it three times gets the same answer three times.
+
+### Timeouts
+
+Each attempt of a call gets 30 seconds by default, from connecting to the last byte of the answer. Set your own with `timeout`:
+
+```zig
+var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
+defer client.deinit();
+```
+
+A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way.
+
+The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
 
 ### Nothing is cached
 

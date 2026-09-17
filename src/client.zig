@@ -22,6 +22,12 @@ pub const Options = struct {
     base_url: []const u8 = default_base_url,
     /// Further attempts a transient failure gets.
     retries: u32 = 2,
+    /// How long one attempt of any call may take, from connecting to the last
+    /// byte of the answer; a timeout is `error.Network`, so it is retried, and
+    /// each retry gets the whole bound again. A database transfer is bounded
+    /// only until its response head, so a download is never cut off. Must be
+    /// positive.
+    timeout: Io.Duration = .fromSeconds(30),
 };
 
 /// Per-call overrides for one request. Anything left null falls back to the
@@ -53,12 +59,15 @@ pub const Client = struct {
     io: Io,
     transport: http.Transport,
     retries: u32,
+    timeout: Io.Duration,
 
     pub const InitError = Allocator.Error || error{InvalidBaseUrl};
 
     /// `io` is the same `std.Io` implementation the rest of your program uses;
     /// `std.Io.Threaded` is the usual one.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
+        std.debug.assert(options.timeout.nanoseconds > 0);
+
         // Empty counts as absent, so a `${{ secrets.MISSING }}` that interpolated
         // to nothing presents no credential rather than a bearer token of one
         // space. Whether the key reached the wire is asserted in the suites.
@@ -91,6 +100,7 @@ pub const Client = struct {
                 .authorization = authorization,
             },
             .retries = options.retries,
+            .timeout = options.timeout,
         };
     }
 

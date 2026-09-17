@@ -76,4 +76,7 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
 
     const retried = try client.database().list(.{ .retries = 4 });
     defer retried.deinit();
+
+    var bounded = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
+    defer bounded.deinit();
 }

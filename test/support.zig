@@ -26,6 +26,15 @@ pub const Route = struct {
     /// follows a redirect it should not is told the file is enormous without the
     /// test having to produce one.
     promised_length: ?u64 = null,
+    /// Stops writing for this long once the head and `stall_after` bytes of the
+    /// body are out, or before the head when that is null, then writes the rest.
+    /// Tearing the stub down ends a stall early, so one outlasting its test
+    /// costs nothing.
+    stall: Io.Duration = .zero,
+    stall_after: ?usize = 0,
+    /// Writes each byte of the body after the stall on its own, this far apart,
+    /// so no one read waits long however long the whole body takes.
+    trickle: Io.Duration = .zero,
 
     pub const Header = struct { name: []const u8, value: []const u8 };
 
@@ -44,6 +53,11 @@ pub const Call = struct {
     accept_encoding: []const u8,
 };
 
+/// Past this many requests the stub ends the test process: a client caught in a
+/// loop cannot be failed from inside a call it never returns from, and an
+/// answer it can shrug off bounds nothing.
+pub const request_bound = 64;
+
 pub const Stub = struct {
     gpa: Allocator,
     io: Io,
@@ -60,6 +74,9 @@ pub const Stub = struct {
     calls: std.ArrayList(Call) = .empty,
     /// The last `User-Agent` header seen.
     user_agent: []const u8 = "",
+    /// Slow answers the client stopped reading, seen as a write that failed.
+    hangups: usize = 0,
+    closing: Io.Event = .unset,
 
     /// Binds an ephemeral port on the loopback and starts serving.
     pub fn start(gpa: Allocator, io: Io) !*Stub {
@@ -82,6 +99,7 @@ pub const Stub = struct {
     }
 
     pub fn deinit(self: *Stub) void {
+        self.closing.set(self.io);
         // Cancelling is what makes the blocked accept return: it is a
         // cancelation point, so the loop ends there rather than on the next
         // connection that happens to arrive.
@@ -163,6 +181,29 @@ pub const Stub = struct {
         defer self.mutex.unlock(self.io);
         return self.calls.items.len == 1 and std.mem.eql(u8, self.calls.items[0].path, path);
     }
+
+    pub fn hangupCount(self: *Stub) usize {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.hangups;
+    }
+
+    /// Waits `duration` on the real clock, or less if the stub is torn down
+    /// meanwhile, which is when this answers false.
+    fn pause(self: *Stub, duration: Io.Duration) bool {
+        const until: Io.Clock.Timestamp = .fromNow(self.io, .{ .raw = duration, .clock = .awake });
+        while (!self.closing.isSet()) {
+            const left = until.durationFromNow(self.io);
+            if (left.raw.nanoseconds <= 0) {
+                return true;
+            }
+            self.closing.waitTimeout(self.io, .{ .duration = left }) catch |err| switch (err) {
+                error.Timeout => {},
+                error.Canceled => return false,
+            };
+        }
+        return false;
+    }
 };
 
 fn acceptLoop(self: *Stub) void {
@@ -189,13 +230,17 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
         .status = 404,
         .body = "{\"rc\":\"UNKNOWN_DATASET\"}",
     };
-    writeResponse(self.io, stream, answer) catch {};
+    writeResponse(self, stream, answer) catch {};
 }
 
 fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
 
+    if (self.calls.items.len == request_bound) {
+        std.debug.print("the stub was asked for {d} requests: a loop in the code under test\n", .{request_bound});
+        std.process.exit(1);
+    }
     const owned = self.arena.allocator().dupe(u8, path) catch return null;
     self.calls.append(self.gpa, .{
         .path = owned,
@@ -261,10 +306,14 @@ fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn writeResponse(io: Io, stream: Io.net.Stream, answer: Route) !void {
+fn writeResponse(self: *Stub, stream: Io.net.Stream, answer: Route) !void {
     var write_buffer: [8192]u8 = undefined;
-    var writer = stream.writer(io, &write_buffer);
+    var writer = stream.writer(self.io, &write_buffer);
     const out = &writer.interface;
+    const slow = answer.stall.nanoseconds > 0 or answer.trickle.nanoseconds > 0;
+    if (slow and answer.stall_after == null and !self.pause(answer.stall)) {
+        return;
+    }
     const length = answer.promised_length orelse answer.body.len;
     try out.print("HTTP/1.1 {d} X\r\nContent-Type: application/json\r\n", .{answer.status});
     try out.print("Content-Length: {d}\r\nConnection: close\r\n", .{length});
@@ -272,12 +321,44 @@ fn writeResponse(io: Io, stream: Io.net.Stream, answer: Route) !void {
         try out.print("{s}: {s}\r\n", .{ header.name, header.value });
     }
     try out.writeAll("\r\n");
-    try out.writeAll(answer.body);
-    try out.flush();
+    if (slow) {
+        writeSlowly(self, out, answer) catch |err| {
+            if (err != error.StubClosing) {
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
+                self.hangups += 1;
+            }
+            return err;
+        };
+    } else {
+        try out.writeAll(answer.body);
+        try out.flush();
+    }
     // A promised body that is never written would leave the client waiting for
     // the rest of it, so the connection is closed instead: whoever followed the
     // redirect gets an error, and the request is on the record either way.
-    try stream.shutdown(io, .both);
+    try stream.shutdown(self.io, .both);
+}
+
+fn writeSlowly(self: *Stub, out: *Io.Writer, answer: Route) !void {
+    const first = @min(answer.stall_after orelse 0, answer.body.len);
+    try out.writeAll(answer.body[0..first]);
+    try out.flush();
+    if (answer.stall_after != null and !self.pause(answer.stall)) {
+        return error.StubClosing;
+    }
+    if (answer.trickle.nanoseconds == 0) {
+        try out.writeAll(answer.body[first..]);
+        try out.flush();
+        return;
+    }
+    for (answer.body[first..]) |byte| {
+        if (!self.pause(answer.trickle)) {
+            return error.StubClosing;
+        }
+        try out.writeByte(byte);
+        try out.flush();
+    }
 }
 
 /// A stub origin, an `Io` to reach it with, and a client pointed at it: the four

@@ -161,6 +161,7 @@ pub const DatabaseApi = struct {
             .path = "/api/v2/database/download",
             .query = &query,
             .retries = options.retries orelse self.client.retries,
+            .timeout = self.client.timeout,
             .diagnostics = options.diagnostics orelse &scratch,
         });
     }
@@ -182,7 +183,9 @@ pub const DatabaseApi = struct {
     /// `retries` applies to reaching the API for the link, and to object storage
     /// failing before the first byte moves. A transfer that dies part way is
     /// never started again: resuming a half-moved gigabyte is a different
-    /// problem from asking again.
+    /// problem from asking again. The client's `timeout` bounds the same two
+    /// things and nothing after the response head, so a transfer runs as long as
+    /// it takes.
     pub fn download(
         self: DatabaseApi,
         id: []const u8,
@@ -290,17 +293,19 @@ pub const DatabaseApi = struct {
         });
         defer self.client.gpa.free(url);
 
-        // Only this header phase retries: a 5xx or a transport failure from
-        // object storage before any byte has moved is asked again, the same as
-        // any API call.
+        // Only this header phase retries, and only it runs against the timeout:
+        // a 5xx, a transport failure or a timeout from object storage before any
+        // byte has moved is asked again, the same as any API call.
+        const io = self.client.io;
         var delay = http.retry_base_delay;
         var remaining = options.retries orelse self.client.retries;
         while (true) {
             diag.reset();
-            if (transfer.begin(&self.client.transport, self.client.gpa, url, diag)) {
+            const args = .{ transfer, &self.client.transport, self.client.gpa, url, diag };
+            if (http.bounded(io, self.client.timeout, diag, http.Transfer.begin, args)) {
                 return;
             } else |err| {
-                if (remaining == 0 or !errors.isRetryable(err) or !http.backOff(self.client.io, diag, &delay)) {
+                if (remaining == 0 or !errors.isRetryable(err) or !http.backOff(io, diag, &delay)) {
                     return err;
                 }
                 remaining -= 1;
@@ -323,6 +328,7 @@ pub const DatabaseApi = struct {
             .path = path,
             .query = query,
             .retries = options.retries orelse self.client.retries,
+            .timeout = self.client.timeout,
             .diagnostics = diag,
         });
         defer gpa.free(body);

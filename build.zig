@@ -19,7 +19,13 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run the unit and conformance tests");
     const unit_tests = b.addTest(.{ .root_module = internetdata });
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
-    for ([_][]const u8{ "test/conformance.zig", "test/client.zig", "test/readme.zig" }) |path| {
+    const suites = [_][]const u8{
+        "test/conformance.zig",
+        "test/client.zig",
+        "test/timeout.zig",
+        "test/readme.zig",
+    };
+    for (suites) |path| {
         test_step.dependOn(&b.addRunArtifact(suite(b, internetdata, target, optimize, path)).step);
     }
 
