@@ -150,8 +150,52 @@ pub fn backOff(io: Io, diag: *const Diagnostics, delay: *Io.Duration) bool {
     return true;
 }
 
-/// Every request the library makes: five GET operations with no request bodies,
-/// which is the whole API.
+/// One OAuth request: a GET, or a POST of a form body that is already encoded.
+pub const OauthRequest = struct {
+    method: std.http.Method = .GET,
+    path: []const u8,
+    form: []const u8 = "",
+    retries: u32,
+    timeout: Io.Duration,
+    diagnostics: *Diagnostics,
+};
+
+/// `send` for the OAuth endpoints. Never carries the API key, and never retries
+/// an OAuth refusal, whatever `retries` allows.
+pub fn sendOauth(
+    transport: *Transport,
+    gpa: Allocator,
+    io: Io,
+    request: OauthRequest,
+) errors.OauthCallError![]u8 {
+    const diag = request.diagnostics;
+    // Zero or below, every attempt would time out before it started, so the
+    // call would fail only after the whole backoff; near the top of
+    // `Io.Duration` the deadline itself overflows and panics. Neither is sent.
+    if (!validTimeout(request.timeout)) {
+        return refuseTimeout(diag, request.timeout);
+    }
+    var delay = retry_base_delay;
+    var remaining = request.retries;
+    while (true) {
+        diag.reset();
+        const args = .{ transport, gpa, request, diag };
+        if (bounded(io, request.timeout, diag, Transport.oauthAttempt, args)) |body| {
+            return body;
+        } else |err| switch (err) {
+            error.OauthAccessDenied, error.OauthExpiredToken, error.OauthRejected => return err,
+            else => |ordinary| {
+                if (remaining == 0 or !errors.isRetryable(ordinary) or !backOff(io, diag, &delay)) {
+                    return ordinary;
+                }
+                remaining -= 1;
+            },
+        }
+    }
+}
+
+/// Every request the library makes: the five GET operations, and the OAuth
+/// requests.
 pub const Transport = struct {
     http: std.http.Client,
     /// Without a trailing slash.
@@ -244,6 +288,65 @@ pub const Transport = struct {
         }
         const body = try readBody(&response, gpa, diag);
         defer gpa.free(body);
+        if (errors.envelopeMessage(gpa, body)) |message| {
+            defer gpa.free(message);
+            diag.setMessage(message);
+        }
+        return errors.classify(status, retry_after.present);
+    }
+
+    /// The body of a 2xx answer to an OAuth request, owned by `gpa`.
+    ///
+    /// No `Authorization` at all, whatever the client holds: these endpoints
+    /// have no use for the key, and on the token endpoint the header would read
+    /// as client authentication, which these public clients do not have.
+    fn oauthAttempt(
+        self: *Transport,
+        gpa: Allocator,
+        oauth: OauthRequest,
+        diag: *Diagnostics,
+    ) errors.OauthCallError![]u8 {
+        const url = try self.buildUrl(gpa, oauth.path, &.{});
+        defer gpa.free(url);
+        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
+        var request = self.http.request(oauth.method, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = .omit,
+                .user_agent = .{ .override = user_agent },
+                .content_type = if (oauth.method == .POST)
+                    .{ .override = "application/x-www-form-urlencoded" }
+                else
+                    .default,
+            },
+        }) catch |err| return fail(diag, err);
+        defer request.deinit();
+        if (oauth.method == .POST) {
+            // `sendBodyComplete` takes the bytes as mutable, so the body is copied.
+            const payload = try gpa.dupe(u8, oauth.form);
+            defer gpa.free(payload);
+            request.sendBodyComplete(payload) catch |err| return fail(diag, err);
+        } else {
+            request.sendBodiless() catch |err| return fail(diag, err);
+        }
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+
+        const status = @intFromEnum(response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(response.head);
+        diag.retry_after_s = retry_after.seconds;
+        const body = try readBody(&response, gpa, diag);
+        if (status >= 200 and status < 300) {
+            return body;
+        }
+        defer gpa.free(body);
+        // Only a 4xx can be a refusal. Every 5xx is the server failing, whatever
+        // its body says.
+        if (status >= 400 and status < 500) {
+            if (errors.oauthRefusal(gpa, body, diag)) |refusal| {
+                return refusal;
+            }
+        }
         if (errors.envelopeMessage(gpa, body)) |message| {
             defer gpa.free(message);
             diag.setMessage(message);

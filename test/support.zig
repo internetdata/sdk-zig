@@ -45,12 +45,24 @@ pub const Route = struct {
 
 /// One request the stub answered, as much of it as a test is allowed to keep.
 pub const Call = struct {
+    method: []const u8,
     path: []const u8,
+    /// The request target as sent, query string included.
+    target: []const u8,
+    /// The request line and every header, as sent.
+    head: []const u8,
+    body: []const u8,
     /// Empty when the request carried no `Authorization` header at all.
     authorization: []const u8,
     /// What the request was willing to accept. The transfer pins `identity`, so
     /// this is where that is checked.
     accept_encoding: []const u8,
+    /// When the request finished arriving, on the stub's own clock.
+    at: Io.Timestamp,
+
+    pub fn header(self: Call, name: []const u8) ?[]const u8 {
+        return headerValue(self.head, name);
+    }
 };
 
 /// Past this many requests the stub ends the test process: a client caught in a
@@ -223,17 +235,26 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
     var head_buffer: [8192]u8 = undefined;
     const head = readHead(&reader.interface, &head_buffer) catch return;
     const target = requestTarget(head) orelse return;
+    // A POST carries its body after the blank line, sized by Content-Length.
+    const length = if (headerValue(head, "content-length")) |value|
+        std.fmt.parseInt(usize, value, 10) catch 0
+    else
+        0;
+    const body = self.gpa.alloc(u8, length) catch return;
+    defer self.gpa.free(body);
+    reader.interface.readSliceAll(body) catch return;
 
     // An unrouted path gets a 404 with the envelope the API uses, so a test that
     // forgets a route fails as a client error rather than as a hang.
-    const answer = record(self, target, head) orelse Route{
+    const answer = record(self, target, head, body) orelse Route{
         .status = 404,
         .body = "{\"rc\":\"UNKNOWN_DATASET\"}",
     };
     writeResponse(self, stream, answer) catch {};
 }
 
-fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
+fn record(self: *Stub, path: []const u8, head: []const u8, body: []const u8) ?Route {
+    const at = Io.Clock.awake.now(self.io);
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
 
@@ -241,11 +262,18 @@ fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
         std.debug.print("the stub was asked for {d} requests: a loop in the code under test\n", .{request_bound});
         std.process.exit(1);
     }
-    const owned = self.arena.allocator().dupe(u8, path) catch return null;
+    const arena = self.arena.allocator();
+    const owned = arena.dupe(u8, path) catch return null;
+    const line_end = std.mem.indexOf(u8, head, " ") orelse 0;
     self.calls.append(self.gpa, .{
+        .method = arena.dupe(u8, head[0..line_end]) catch "",
         .path = owned,
+        .target = arena.dupe(u8, rawTarget(head) orelse "") catch "",
+        .head = arena.dupe(u8, head) catch "",
+        .body = arena.dupe(u8, body) catch "",
         .authorization = ownedHeader(self, head, "authorization"),
         .accept_encoding = ownedHeader(self, head, "accept-encoding"),
+        .at = at,
     }) catch {};
     self.user_agent = ownedHeader(self, head, "user-agent");
     if (self.sequences.getPtr(path)) |queue| {
@@ -286,12 +314,16 @@ fn readHead(reader: *Io.Reader, out: []u8) ![]const u8 {
 /// The path, with any query string dropped: routes are keyed by path, and the
 /// query carries the database id and the format, which each test already knows.
 fn requestTarget(head: []const u8) ?[]const u8 {
+    const target = rawTarget(head) orelse return null;
+    const query = std.mem.indexOfScalar(u8, target, '?') orelse return target;
+    return target[0..query];
+}
+
+fn rawTarget(head: []const u8) ?[]const u8 {
     const line_end = std.mem.indexOf(u8, head, "\r\n") orelse return null;
     var parts = std.mem.tokenizeScalar(u8, head[0..line_end], ' ');
     _ = parts.next() orelse return null;
-    const target = parts.next() orelse return null;
-    const query = std.mem.indexOfScalar(u8, target, '?') orelse return target;
-    return target[0..query];
+    return parts.next();
 }
 
 fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {

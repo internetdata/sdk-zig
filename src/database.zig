@@ -61,10 +61,7 @@ pub const DatabaseApi = struct {
     /// `Database.versions`, not `Database.base`.
     ///
     /// **This is the SERVER's answer about YOUR key, and nothing else assembles
-    /// it.** A database commissioned for a single customer is ABSENT for every
-    /// other organization rather than listed with an `unlicensed` standing, so
-    /// what you get back is not necessarily what another key gets back, and
-    /// neither the catalog nor any part of it can be reconstructed elsewhere.
+    /// it**, so a listing held from one key is not an answer for another.
     pub fn list(self: DatabaseApi, options: client_mod.CallOptions) CallError!Parsed([]const Database) {
         const answer = try self.fetch(DatabaseList, "/api/v2/database/list", &.{}, options);
         return .{ .arena = answer.arena, .value = answer.value.databases };
@@ -376,9 +373,6 @@ pub const Database = struct {
     summary: []const u8,
     /// `licensed` is a live grant, `expired` one whose term has ended, and
     /// `unlicensed` a database published but never bought.
-    ///
-    /// It never says a database does not exist. A family built for one customer
-    /// is simply ABSENT from another organization's listing.
     standing: []const u8,
     /// What your license permits you to do with the data: `evaluation`,
     /// `standard` or `redistribute`. Null when there is no license at all, so

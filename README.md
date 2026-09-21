@@ -10,7 +10,7 @@ The library helps you browse and download InternetData's licensed IP and network
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.2.1
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.3.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -24,7 +24,7 @@ Requires Zig **0.16.0**. Zig is pre-1.0 and its standard library still changes s
 
 ## Usage
 
-Every endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a license.
+Every database endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a license.
 
 ```zig
 const std = @import("std");
@@ -175,13 +175,33 @@ const quick = try client.database().list(.{ .timeout = .fromMilliseconds(500) })
 defer quick.deinit();
 ```
 
-A call's own value replaces the client's, longer or shorter. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way. A timeout has to be positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years. A call given one outside that fails with `error.BadRequest` without sending anything, and `Client.init` asserts it.
+A call's own value replaces the client's, longer or shorter, and `OauthOptions` and `DeviceAuthorizationOptions` take one too. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way, and `pollDeviceToken` holds each request to it rather than the whole wait. A timeout has to be positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years. A call given one outside that fails with `error.BadRequest` without sending anything, and `Client.init` asserts it.
 
 The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
 
 ### Nothing is cached
 
 The client caches nothing. What your organization may see depends on the key, so a listing held from one client is not an answer for another, and the catalog is small enough that re-reading it costs less than being wrong about whose it was.
+
+### Sign in with OAuth (device flow)
+
+A program running on the person's own machine can let them sign in with a browser and pick one of their API keys, instead of asking them to paste it:
+
+```zig
+var client = try internetdata.Client.init(gpa, threaded.io(), .{});
+defer client.deinit();
+const device = try client.oauth().deviceAuthorization("your-client-id", .{ .scope = "account.read apikeys.read apikeys.reveal" });
+defer device.deinit();
+std.debug.print("Open {s} and enter {s}\n", .{ device.value.verification_uri, device.value.user_code });
+
+const token = try client.oauth().pollDeviceToken("your-client-id", device.value, .{});
+defer token.deinit();
+const apikey = token.value.apikey orelse return error.NoApiKey; // none was picked, or it cannot be shown again
+var keyed = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = apikey });
+defer keyed.deinit();
+```
+
+A denied sign-in fails with `error.OauthAccessDenied` and a code that ran out with `error.OauthExpiredToken`. Client IDs are issued on request from support@internetdata.io, and `client.oauth().revoke("your-client-id", refresh_token, .{})` signs the machine out again.
 
 ## Other Libraries
 

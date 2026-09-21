@@ -3,6 +3,7 @@ const std = @import("std");
 const database_mod = @import("database.zig");
 const errors = @import("errors.zig");
 const http = @import("http.zig");
+const oauth_mod = @import("oauth.zig");
 
 const Allocator = std.mem.Allocator;
 const Diagnostics = errors.Diagnostics;
@@ -14,10 +15,11 @@ pub const default_base_url = "https://internetdata.io";
 pub const Options = struct {
     /// A key from the console carrying the `db.download` scope. Optional: a
     /// client built without one sends no `Authorization` header at all, rather
-    /// than refusing to build. Every endpoint published today is licensed and
-    /// answers 401 without a key, but that is what the API serves rather than a
-    /// property of its shape, and a client that cannot be built keyless would
-    /// have to change its own signature the day a dataset is served free.
+    /// than refusing to build. Every database endpoint published today is
+    /// licensed and answers 401 without a key, but that is what the API serves
+    /// rather than a property of its shape, and a client that cannot be built
+    /// keyless would have to change its own signature the day a dataset is served
+    /// free. `oauth()` never sends one.
     api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Further attempts a transient failure gets.
@@ -118,11 +120,16 @@ pub const Client = struct {
         self.* = undefined;
     }
 
-    /// The licensed database downloads, which is every call this API has.
-    ///
-    /// A namespace over one domain rather than several, kept because the
-    /// sibling VPNDetection client spells the same seven calls the same way.
+    /// The licensed database downloads, for keys carrying the `db.download`
+    /// scope.
     pub fn database(self: *Client) database_mod.DatabaseApi {
+        return .{ .client = self };
+    }
+
+    /// Signing a person in with the OAuth device flow, so a program on their
+    /// own machine can be handed one of their API keys. These requests never
+    /// carry this client's API key, so a client built without one works.
+    pub fn oauth(self: *Client) oauth_mod.OauthApi {
         return .{ .client = self };
     }
 };

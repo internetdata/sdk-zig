@@ -1,10 +1,11 @@
 //! The official Zig client library for the [InternetData](https://internetdata.io)
 //! API: licensed IP and network databases, downloaded as CSV.GZ or MMDB.
 //!
-//! Start with `Client.init`, then `Client.database()`. Every endpoint published
-//! today needs an API key carrying the `db.download` scope, but `Options.api_key`
-//! is optional: a client built without one sends no `Authorization` header
-//! rather than refusing to build.
+//! Start with `Client.init`, then `Client.database()`. Every database endpoint
+//! published today needs an API key carrying the `db.download` scope, but
+//! `Options.api_key` is optional: a client built without one sends no
+//! `Authorization` header rather than refusing to build. `Client.oauth()` signs a
+//! person in with the device flow, and never needs a key.
 //!
 //! ```
 //! var threaded: std.Io.Threaded = .init(gpa, .{});
@@ -17,13 +18,6 @@
 //! defer catalog.deinit();
 //! std.debug.print("{s}\n", .{catalog.value[0].versions[0].id});
 //! ```
-//!
-//! # What a listing is
-//!
-//! `database().list` is the server's answer about YOUR key. A database commissioned for a
-//! single customer is absent from every other organization's listing rather than
-//! present with an `unlicensed` standing, so two keys can see two different
-//! catalogs and neither can be reconstructed from anywhere else.
 //!
 //! # Memory
 //!
@@ -50,15 +44,25 @@ pub const DownloadAttempt = @import("database.zig").DownloadAttempt;
 pub const DownloadError = @import("database.zig").DownloadError;
 pub const Format = @import("database.zig").Format;
 
+pub const DeviceAuthorization = @import("oauth.zig").DeviceAuthorization;
+pub const DeviceAuthorizationOptions = @import("oauth.zig").DeviceAuthorizationOptions;
+pub const OauthApi = @import("oauth.zig").OauthApi;
+pub const OauthMetadata = @import("oauth.zig").OauthMetadata;
+pub const OauthOptions = @import("oauth.zig").OauthOptions;
+pub const TokenResponse = @import("oauth.zig").TokenResponse;
+
 pub const CallError = @import("errors.zig").CallError;
 pub const Diagnostics = @import("errors.zig").Diagnostics;
 pub const Error = @import("errors.zig").Error;
 pub const isRetryable = @import("errors.zig").isRetryable;
 pub const kindName = @import("errors.zig").kindName;
+pub const OauthCallError = @import("errors.zig").OauthCallError;
+pub const OauthError = @import("errors.zig").OauthError;
 
 test {
     _ = @import("client.zig");
     _ = @import("database.zig");
     _ = @import("errors.zig");
     _ = @import("http.zig");
+    _ = @import("oauth.zig");
 }

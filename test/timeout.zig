@@ -105,6 +105,7 @@ test "a timeout no attempt can meet is refused before any request" {
     var client = try harness.client(.{ .api_key = "key", .retries = 2 });
     defer client.deinit();
     const database = client.database();
+    const oauth = client.oauth();
 
     const refused = [_]Io.Duration{
         .zero,
@@ -115,6 +116,7 @@ test "a timeout no attempt can meet is refused before any request" {
     for (refused) |timeout| {
         var diagnostics: Diagnostics = .{};
         const options: internetdata.CallOptions = .{ .timeout = timeout, .diagnostics = &diagnostics };
+        const oauth_options: internetdata.OauthOptions = .{ .timeout = timeout, .diagnostics = &diagnostics };
         const start = Io.Clock.awake.now(harness.io());
         try std.testing.expectError(error.BadRequest, database.list(options));
         try std.testing.expectError(error.BadRequest, database.metadata("bogon_ip_v1", options));
@@ -128,9 +130,25 @@ test "a timeout no attempt can meet is refused before any request" {
             scratch.path("data.csv.gz"),
             options,
         ));
+        try std.testing.expectError(error.BadRequest, oauth.metadata(oauth_options));
+        try std.testing.expectError(error.BadRequest, oauth.deviceAuthorization("x", .{
+            .timeout = timeout,
+            .diagnostics = &diagnostics,
+        }));
+        try std.testing.expectError(error.BadRequest, oauth.exchangeDeviceCode("x", "x", oauth_options));
+        try std.testing.expectError(error.BadRequest, oauth.exchangeRefreshToken("x", "x", oauth_options));
+        try std.testing.expectError(error.BadRequest, oauth.revoke("x", "x", oauth_options));
         // Refused rather than retried: the first backoff alone is 250 ms.
         try std.testing.expect(since(harness, start) < 250);
         try std.testing.expect(std.mem.startsWith(u8, diagnostics.message(), "timeout must be positive"));
+        // The poll waits out its interval before the request it bounds.
+        try std.testing.expectError(error.BadRequest, oauth.pollDeviceToken("x", .{
+            .device_code = "x",
+            .user_code = "x",
+            .verification_uri = "x",
+            .expires_in = 60,
+            .interval = 1,
+        }, oauth_options));
     }
     try std.testing.expectEqual(0, harness.stub.callCount());
     try std.testing.expect(!scratch.exists("data.csv.gz.part"));
@@ -170,7 +188,9 @@ test "every call honors the client's timeout and its own" {
                 @tagName(call),
                 if (per_call) " per call" else "",
             });
-            try expectTimedOut(name, outcome, &diagnostics, took_ms, 250, 250 + slack_ms);
+            // The poll waits out its interval before the request it bounds.
+            const floor_ms: i64 = if (call == .poll) 1250 else 250;
+            try expectTimedOut(name, outcome, &diagnostics, took_ms, floor_ms, floor_ms + slack_ms);
         }
     }
 }
@@ -289,6 +309,12 @@ const Call = enum {
     download_link,
     download,
     download_bytes,
+    oauth_metadata,
+    device_authorization,
+    exchange_device_code,
+    exchange_refresh_token,
+    revoke,
+    poll,
 
     fn stall(call: Call, harness: *Harness) !void {
         const stub = harness.stub;
@@ -299,6 +325,16 @@ const Call = enum {
             .downloads => try stub.route("/api/v2/database/downloads", stalledBody("{\"downloads\":[]}")),
             .download_url, .download_link => try stub.route("/api/v2/database/download", stalledHead()),
             .download, .download_bytes => try support.routeDownload(harness, stalledHead()),
+            .oauth_metadata => {
+                try stub.route("/.well-known/oauth-authorization-server", stalledBody("{\"issuer\":\"x\"}"));
+            },
+            .device_authorization => {
+                try stub.route("/oauth/device_authorization", stalledBody("{\"device_code\":\"x\"}"));
+            },
+            .exchange_device_code, .exchange_refresh_token, .poll => {
+                try stub.route("/oauth/token", stalledBody("{\"access_token\":\"x\"}"));
+            },
+            .revoke => try stub.route("/oauth/revoke", stalledBody("{\"revoked\":true}")),
         }
     }
 
@@ -306,6 +342,7 @@ const Call = enum {
     /// here, and the caller reports it.
     fn run(call: Call, client: *internetdata.Client, options: internetdata.CallOptions) anyerror!void {
         const database = client.database();
+        const oauth: internetdata.OauthOptions = .{ .timeout = options.timeout, .diagnostics = options.diagnostics };
         switch (call) {
             .list => (try database.list(options)).deinit(),
             .metadata => (try database.metadata("x", options)).deinit(),
@@ -318,6 +355,21 @@ const Call = enum {
                 _ = try database.download("x", .mmdb, scratch.path("x.mmdb"), options);
             },
             .download_bytes => client.gpa.free(try database.downloadBytes("x", .mmdb, options)),
+            .oauth_metadata => (try client.oauth().metadata(oauth)).deinit(),
+            .device_authorization => (try client.oauth().deviceAuthorization("x", .{
+                .timeout = options.timeout,
+                .diagnostics = options.diagnostics,
+            })).deinit(),
+            .exchange_device_code => (try client.oauth().exchangeDeviceCode("x", "x", oauth)).deinit(),
+            .exchange_refresh_token => (try client.oauth().exchangeRefreshToken("x", "x", oauth)).deinit(),
+            .revoke => try client.oauth().revoke("x", "x", oauth),
+            .poll => (try client.oauth().pollDeviceToken("x", .{
+                .device_code = "x",
+                .user_code = "x",
+                .verification_uri = "x",
+                .expires_in = 60,
+                .interval = 1,
+            }, oauth)).deinit(),
         }
     }
 };
