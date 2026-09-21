@@ -17,8 +17,9 @@
 #      nothing published to test, and unlike an interpreted language a Zig test
 #      naming a method that version does not have will not COMPILE, so this gate
 #      covers the whole suite rather than one test.
-#   2. The staging key is missing or EMPTY, which the suite skips from inside so
-#      the reason lands in the test output rather than only here.
+#   2. The staging key is missing or EMPTY, which the database tests skip from
+#      inside so the reason lands in the test output rather than only here. The
+#      OAuth checks carry no key and run regardless.
 #
 # Zig runs natively when the toolchain is present and inside the pinned image
 # otherwise, so a dev box with no Zig and a CI runner both use this entry point.
@@ -28,9 +29,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO_URL="https://github.com/internetdata/sdk-zig"
-# The major this suite is written against. Read by hand rather than parsed out
-# of a manifest: the gate has to run before anything is fetched or built.
-RANGE_LOW="2.0.0"
+# The major this suite is written against, from the release its oldest check
+# needs (src/oauth.zig, 2.3.0). Read by hand rather than parsed out of a
+# manifest: the gate has to run before anything is fetched or built.
+RANGE_LOW="2.3.0"
 RANGE_HIGH="3.0.0"
 
 LOCAL_PATH="${SDK_LOCAL_PATH:-}"
@@ -241,7 +243,7 @@ function reportKey() {
     if [ -n "${INTERNETDATA_STAGING_KEY:-}" ] ; then
         echo "==> INTERNETDATA_STAGING_KEY is set"
     else
-        notice "INTERNETDATA_STAGING_KEY is not set: every staging test skips from inside the suite"
+        notice "INTERNETDATA_STAGING_KEY is not set: every database test skips from inside the suite"
     fi
 }
 
