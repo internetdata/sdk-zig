@@ -10,7 +10,7 @@ The library helps you browse and download InternetData's licensed IP and network
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.2.0
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.2.1
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -175,7 +175,7 @@ const quick = try client.database().list(.{ .timeout = .fromMilliseconds(500) })
 defer quick.deinit();
 ```
 
-A call's own value replaces the client's, longer or shorter. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way.
+A call's own value replaces the client's, longer or shorter. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way. A timeout has to be positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years. A call given one outside that fails with `error.BadRequest` without sending anything, and `Client.init` asserts it.
 
 The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
 

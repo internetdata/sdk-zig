@@ -26,12 +26,18 @@ test "an error is classified by range and by Retry-After, never by an enumerated
         defer harness.deinit();
         try routeFailure(harness, metadata_path, case);
 
-        // No retries, so a retryable failure surfaces rather than looping.
-        var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+        // A case that must not be retried gets retries anyway, and the request
+        // count is what shows none was spent; a retryable one gets none, so it
+        // surfaces rather than looping.
+        var client = try harness.client(.{ .api_key = "key", .retries = if (case.expect.retryable) 0 else 2 });
         defer client.deinit();
 
         var diagnostics: internetdata.Diagnostics = .{};
         const err = failureOf(client.database().metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics }), case.name);
+        std.testing.expectEqual(1, harness.stub.callCount()) catch |e| {
+            std.debug.print("{s}: retried\n", .{case.name});
+            return e;
+        };
         try expectCase(case, err, diagnostics);
     }
 }
@@ -49,7 +55,7 @@ test "the download redirect classifies a refusal the same way" {
         defer harness.deinit();
         try routeFailure(harness, download_path, case);
 
-        var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+        var client = try harness.client(.{ .api_key = "key", .retries = if (case.expect.retryable) 0 else 2 });
         defer client.deinit();
 
         var diagnostics: internetdata.Diagnostics = .{};
@@ -58,6 +64,10 @@ test "the download redirect classifies a refusal the same way" {
             gpa,
             case.name,
         );
+        std.testing.expectEqual(1, harness.stub.callCount()) catch |e| {
+            std.debug.print("{s}: retried\n", .{case.name});
+            return e;
+        };
         try expectCase(case, err, diagnostics);
     }
 }

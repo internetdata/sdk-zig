@@ -89,6 +89,57 @@ test "a per-call timeout below the client's fires, and the next call keeps the c
     try expectTimedOut("client value after it", outcome, &diagnostics, took_ms, 1000, 1000 + slack_ms);
 }
 
+// Zero or below, every attempt times out before it starts, so the call would
+// fail as a network error only after the whole backoff; past the bound the
+// deadline overflows and the process panics. Both are refused where they are
+// set, on every call, before a request.
+test "a timeout no attempt can meet is refused before any request" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route(list_path, .ok(list_body));
+    try support.routeDownload(harness, .ok("unused"));
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 2 });
+    defer client.deinit();
+    const database = client.database();
+
+    const refused = [_]Io.Duration{
+        .zero,
+        .fromMilliseconds(-5000),
+        .fromNanoseconds(std.math.maxInt(i64) + 1),
+        .max,
+    };
+    for (refused) |timeout| {
+        var diagnostics: Diagnostics = .{};
+        const options: internetdata.CallOptions = .{ .timeout = timeout, .diagnostics = &diagnostics };
+        const start = Io.Clock.awake.now(harness.io());
+        try std.testing.expectError(error.BadRequest, database.list(options));
+        try std.testing.expectError(error.BadRequest, database.metadata("bogon_ip_v1", options));
+        try std.testing.expectError(error.BadRequest, database.checksums("bogon_ip_v1", .csvgz, options));
+        try std.testing.expectError(error.BadRequest, database.downloads(null, options));
+        try std.testing.expectError(error.BadRequest, database.downloadUrl("bogon_ip_v1", .csvgz, options));
+        try std.testing.expectError(error.BadRequest, database.downloadBytes("bogon_ip_v1", .csvgz, options));
+        try std.testing.expectError(error.BadRequest, database.download(
+            "bogon_ip_v1",
+            .csvgz,
+            scratch.path("data.csv.gz"),
+            options,
+        ));
+        // Refused rather than retried: the first backoff alone is 250 ms.
+        try std.testing.expect(since(harness, start) < 250);
+        try std.testing.expect(std.mem.startsWith(u8, diagnostics.message(), "timeout must be positive"));
+    }
+    try std.testing.expectEqual(0, harness.stub.callCount());
+    try std.testing.expect(!scratch.exists("data.csv.gz.part"));
+
+    // The bound itself is a timeout like any other.
+    (try database.list(.{ .timeout = .fromNanoseconds(std.math.maxInt(i64)) })).deinit();
+    try std.testing.expectEqual(1, harness.stub.callCount());
+}
+
 // Each call against the one path it stalls, first on the client's bound, then
 // on its own below a client's far above it, so a call that ignores either value
 // fails on elapsed time.

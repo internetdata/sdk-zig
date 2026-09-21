@@ -26,7 +26,8 @@ pub const Options = struct {
     /// byte of the answer; a timeout is `error.Network`, so it is retried, and
     /// each retry gets the whole bound again. A database transfer is bounded
     /// only until its response head, so a download is never cut off. Must be
-    /// positive.
+    /// positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years,
+    /// which `init` asserts.
     timeout: Io.Duration = .fromSeconds(30),
 };
 
@@ -34,7 +35,9 @@ pub const Options = struct {
 /// client's setting.
 pub const CallOptions = struct {
     retries: ?u32 = null,
-    /// This call's own `Options.timeout`, longer or shorter.
+    /// This call's own `Options.timeout`, longer or shorter. One that is not
+    /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
+    /// the call with `error.BadRequest` before anything is sent.
     timeout: ?Io.Duration = null,
     /// Filled in with the status, the wait and the API's own result code when
     /// the call fails. A Zig error carries no payload, so this is how the detail
@@ -68,7 +71,7 @@ pub const Client = struct {
     /// `io` is the same `std.Io` implementation the rest of your program uses;
     /// `std.Io.Threaded` is the usual one.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
-        std.debug.assert(options.timeout.nanoseconds > 0);
+        std.debug.assert(http.validTimeout(options.timeout));
 
         // Empty counts as absent, so a `${{ secrets.MISSING }}` that interpolated
         // to nothing presents no credential rather than a bearer token of one

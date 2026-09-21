@@ -24,6 +24,32 @@ test "an unusable base url is refused before any request" {
     }
 }
 
+// Every path starts with `/`, and `//api/...` is another path: production
+// answers it with a redirect this client never follows, so every call would
+// fail. The call's own outcome is not what is asserted, so a doubled path
+// fails at the path it asked for.
+test "a trailing slash on the base url is dropped, however many" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/list", .ok("{\"databases\":[]}"));
+
+    var buffer: [64]u8 = undefined;
+    const base = harness.stub.baseUrl(&buffer);
+    for ([_][]const u8{ "/", "//", "///" }) |slashes| {
+        const base_url = try std.mem.concat(gpa, u8, &.{ base, slashes });
+        defer gpa.free(base_url);
+        var client = try internetdata.Client.init(gpa, harness.io(), .{ .api_key = "key", .base_url = base_url });
+        defer client.deinit();
+        if (client.database().list(.{ .retries = 0 })) |catalog| catalog.deinit() else |_| {}
+    }
+
+    try std.testing.expectEqual(3, harness.stub.callCount());
+    for (harness.stub.seen()) |call| {
+        try std.testing.expectEqualStrings("/api/v2/database/list", call.path);
+    }
+}
+
 test "the API key reaches the wire as a bearer token" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -239,6 +265,29 @@ test "a rate limit is retried after the server supplied wait" {
     // The header, not the backoff schedule, decides the wait.
     const waited = started.untilNow(harness.io(), .awake);
     try std.testing.expect(waited.toMilliseconds() >= 1000);
+}
+
+// Past what `Io.Duration` counts in seconds, the header still marks a throttle,
+// but the client's own backoff decides the wait rather than a panic.
+test "a Retry-After too long to count is waited out on the client's own backoff" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/list", .{
+        .status = 429,
+        .body = "{\"rc\":\"RATE_LIMITED\"}",
+        .headers = &.{.{ .name = "Retry-After", .value = "9223372036854775808" }},
+    });
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 1 });
+    defer client.deinit();
+    var diagnostics: internetdata.Diagnostics = .{};
+    const started = Io.Clock.awake.now(harness.io());
+    try std.testing.expectError(error.RateLimited, client.database().list(.{ .diagnostics = &diagnostics }));
+
+    try std.testing.expectEqual(2, harness.stub.callCount());
+    try std.testing.expectEqual(@as(?u64, null), diagnostics.retry_after_s);
+    try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
 }
 
 // A 404 from a misspelled id is a CLIENT error. Letting it fall through to the
