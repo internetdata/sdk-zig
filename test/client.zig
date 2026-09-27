@@ -183,7 +183,7 @@ test "the download history keeps a refusal and its nulls" {
     defer harness.deinit();
     try harness.stub.route("/api/v2/database/downloads", .ok(
         \\{"downloads":[{"dataset_id":"bogon_ip_v1","format":"csvgz","outcome":"denied",
-        \\ "bytes":null,"http_status":403,"apikey_id":null,"client_ip":"203.0.113.7",
+        \\ "sample":true,"bytes":null,"http_status":403,"apikey_id":null,"client_ip":"203.0.113.7",
         \\ "user_agent":null,"created":"2026-09-04T18:04:26.431Z"}]}
     ));
 
@@ -198,6 +198,7 @@ test "the download history keeps a refusal and its nulls" {
     try std.testing.expect(history.value[0].bytes == null);
     try std.testing.expect(history.value[0].apikey_id == null);
     try std.testing.expectEqualStrings("203.0.113.7", history.value[0].client_ip.?);
+    try std.testing.expect(history.value[0].sample);
 }
 
 test "a limit is only sent when one was asked for" {

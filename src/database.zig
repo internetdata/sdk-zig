@@ -402,6 +402,8 @@ pub const DatabaseVersion = struct {
     summary: []const u8,
     /// The formats this version is BUILT in, as the wire spells them.
     formats: []const []const u8,
+    /// The formats an evaluation sample is published in, if any.
+    sample_formats: ?[]const []const u8 = null,
 };
 
 /// Mirrors `components.schemas.DatabaseMetadata`. The build document the
@@ -424,6 +426,10 @@ pub const DatabaseMetadata = struct {
     sample: std.json.ArrayHashMap([]const std.json.Value) = .{},
     /// Bytes per format. Read this to budget a transfer before starting one.
     size: std.json.ArrayHashMap(i64),
+    /// Bytes per format of the evaluation sample, where one is published.
+    sample_size: ?std.json.ArrayHashMap(i64) = null,
+    /// Row count in the evaluation sample.
+    sample_entries: ?i64 = null,
 };
 
 pub const DatabaseMetadataColumn = struct {
@@ -454,6 +460,8 @@ pub const DownloadAttempt = struct {
     format: []const u8,
     /// `ok`, `unauthorized`, `denied`, `expired`, `unknown` or `unavailable`.
     outcome: []const u8,
+    /// The evaluation sample rather than the database itself.
+    sample: bool,
     /// Object size at redirect time, NOT bytes delivered: the transfer runs
     /// straight from object storage, so how much of it was taken is never seen.
     bytes: ?i64 = null,
