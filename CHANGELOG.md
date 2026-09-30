@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.5.0 - 2026-09-30
+
+### Features
+
+- Add the authorization code sign-in, with PKCE ([`8cd535d`](https://github.com/internetdata/sdk-zig/commit/8cd535d523373f4629679f7c4885674b96938b72))
+
 ## 2.4.0 - 2026-09-27
 
 ### Features
