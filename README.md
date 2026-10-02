@@ -5,7 +5,7 @@
 
 The official Zig client library for the [InternetData](https://internetdata.io) API.
 
-The library helps you browse and download InternetData's licensed IP and network databases: VPN, residential, datacenter and mobile proxy ranges, hosting and CDN address space, Tor nodes, relays and more, published as CSV.GZ and MMDB.
+The library helps you browse and download InternetData's licensed IP and ASN databases: geolocation, anonymity, ownership and network data, published as CSV.GZ and MMDB.
 
 ## Getting Started
 
@@ -228,7 +228,7 @@ There are official InternetData client libraries available for many languages in
 
 ## About InternetData
 
-InternetData: licensed IP and network intelligence databases covering VPN, proxy, hosting, CDN, relay and Tor address space, published daily as CSV.GZ and MMDB.
+Geolocation, anonymity, ownership and network databases for IP addresses and AS numbers, licensed as files you download and query yourself.
 
 [<img src="https://s3.internetdata.io/internetdata-public/brand/mark.svg" alt="InternetData" height="64"/>](https://internetdata.io/)
 
