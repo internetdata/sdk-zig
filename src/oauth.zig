@@ -315,8 +315,9 @@ pub const OauthApi = struct {
     /// is `error.OauthAccessDenied`, a code that ran out
     /// `error.OauthExpiredToken`, and an ordinary failure ends it too. Running
     /// out of `device.expires_in`, counted from this call, is
-    /// `error.OauthExpiredToken` with no status in the diagnostics. Calling it
-    /// again with the same device authorization is safe until the code expires.
+    /// `error.OauthExpiredToken` with no status in the diagnostics, and no sleep
+    /// runs past that deadline. Calling it again with the same device
+    /// authorization is safe until the code expires.
     ///
     /// There is no cancellation handle: it blocks until one of those outcomes.
     /// Canceling the `Io` task running it ends the wait as `error.Network`.
@@ -330,10 +331,21 @@ pub const OauthApi = struct {
         const diag = options.diagnostics orelse &scratch;
         const io = self.client.io;
 
+        // Refused before the first wait rather than at the first exchange, an
+        // interval later, which is when 2.5.0 refused it; a code expiring first
+        // let it pass.
+        try http.checkTimeout(diag, options.timeout orelse self.client.timeout);
         var interval_s: i64 = if (device.interval >= 1) device.interval else default_poll_interval_s;
         const deadline = Io.Clock.awake.now(io).addDuration(.fromSeconds(@max(device.expires_in, 0)));
         while (true) {
-            io.sleep(.fromSeconds(interval_s), .awake) catch |err| {
+            // No wait runs past the deadline: an interval ending after it sleeps
+            // only the time left, and the expiry follows with nothing sent. In
+            // full, an `interval` of 2147483647 held a poll with seconds left for
+            // 68 years, and a widened one ran 7 s against a 3 s lifetime (2.5.0,
+            // measured 2026-10-03).
+            const left = Io.Clock.awake.now(io).durationTo(deadline).nanoseconds;
+            const wait = @max(@min(Io.Duration.fromSeconds(interval_s).nanoseconds, left), 0);
+            io.sleep(.fromNanoseconds(wait), .awake) catch |err| {
                 diag.reset();
                 diag.setMessage(@errorName(err));
                 return error.Network;
@@ -353,7 +365,8 @@ pub const OauthApi = struct {
                 else => return err,
             };
             if (std.mem.eql(u8, refused, "slow_down")) {
-                interval_s += slow_down_step_s;
+                // Saturates: at the top of an i64 a plain `+=` panics.
+                interval_s +|= slow_down_step_s;
             } else if (!std.mem.eql(u8, refused, "authorization_pending")) {
                 return error.OauthRejected;
             }

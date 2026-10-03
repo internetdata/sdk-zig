@@ -59,6 +59,15 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     }
 }
 
+/// Refuses a timeout `validTimeout` rejects. `send` and `sendOauth` run it on
+/// every request; the poll runs it before its first wait, or the bad value
+/// would pass whenever the code expired before a request went out.
+pub fn checkTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error!void {
+    if (!validTimeout(timeout)) {
+        return refuseTimeout(diag, timeout);
+    }
+}
+
 /// A timeout `validTimeout` rejects is the caller's mistake, refused the way
 /// the API refuses a bad argument: `error.BadRequest`, never retried.
 fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {

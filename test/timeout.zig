@@ -138,17 +138,19 @@ test "a timeout no attempt can meet is refused before any request" {
         try std.testing.expectError(error.BadRequest, oauth.exchangeDeviceCode("x", "x", oauth_options));
         try std.testing.expectError(error.BadRequest, oauth.exchangeRefreshToken("x", "x", oauth_options));
         try std.testing.expectError(error.BadRequest, oauth.revoke("x", "x", oauth_options));
-        // Refused rather than retried: the first backoff alone is 250 ms.
-        try std.testing.expect(since(harness, start) < 250);
-        try std.testing.expect(std.mem.startsWith(u8, diagnostics.message(), "timeout must be positive"));
-        // The poll waits out its interval before the request it bounds.
+        // Refused before its first wait, which is the whole interval: 60 s here.
+        // Through 2.5.0 it waited that out first, and a code expiring before it
+        // let the value pass.
         try std.testing.expectError(error.BadRequest, oauth.pollDeviceToken("x", .{
             .device_code = "x",
             .user_code = "x",
             .verification_uri = "x",
-            .expires_in = 60,
-            .interval = 1,
+            .expires_in = 120,
+            .interval = 60,
         }, oauth_options));
+        // Refused rather than retried: the first backoff alone is 250 ms.
+        try std.testing.expect(since(harness, start) < 250);
+        try std.testing.expect(std.mem.startsWith(u8, diagnostics.message(), "timeout must be positive"));
     }
     try std.testing.expectEqual(0, harness.stub.callCount());
     try std.testing.expect(!scratch.exists("data.csv.gz.part"));
