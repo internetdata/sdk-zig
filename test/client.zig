@@ -27,7 +27,8 @@ test "an unusable base url is refused before any request" {
 // Every path starts with `/`, and `//api/...` is another path: production
 // answers it with a redirect this client never follows, so every call would
 // fail. The call's own outcome is not what is asserted, so a doubled path
-// fails at the path it asked for.
+// fails at the path it asked for: one to three slashes reached each of these
+// at a local origin (2.5.0, measured 2026-10-03).
 test "a trailing slash on the base url is dropped, however many" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -36,17 +37,33 @@ test "a trailing slash on the base url is dropped, however many" {
 
     var buffer: [64]u8 = undefined;
     const base = harness.stub.baseUrl(&buffer);
+    const want = [_][]const u8{
+        "/api/v2/database/list",
+        "/api/v2/database/download",
+        "/.well-known/oauth-authorization-server",
+        "/oauth/revoke",
+    };
     for ([_][]const u8{ "/", "//", "///" }) |slashes| {
         const base_url = try std.mem.concat(gpa, u8, &.{ base, slashes });
         defer gpa.free(base_url);
-        var client = try internetdata.Client.init(gpa, harness.io(), .{ .api_key = "key", .base_url = base_url });
+        var client = try internetdata.Client.init(gpa, harness.io(), .{ .api_key = "key", .base_url = base_url, .retries = 0 });
         defer client.deinit();
-        if (client.database().list(.{ .retries = 0 })) |catalog| catalog.deinit() else |_| {}
+        if (client.database().list(.{})) |catalog| catalog.deinit() else |_| {}
+        if (client.database().downloadUrl("bogon_ip_v1", .csvgz, .{})) |url| gpa.free(url) else |_| {}
+        if (client.oauth().metadata(.{})) |metadata| metadata.deinit() else |_| {}
+        client.oauth().revoke("x", "x", .{}) catch {};
+
+        const authorize = try client.oauth().authorizationUrl("x", "https://example.test/cb", "x", .{});
+        defer gpa.free(authorize);
+        const prefix = try std.mem.concat(gpa, u8, &.{ base, "/oauth/authorize?" });
+        defer gpa.free(prefix);
+        try std.testing.expect(std.mem.startsWith(u8, authorize, prefix));
     }
 
-    try std.testing.expectEqual(3, harness.stub.callCount());
-    for (harness.stub.seen()) |call| {
-        try std.testing.expectEqualStrings("/api/v2/database/list", call.path);
+    const calls = harness.stub.seen();
+    try std.testing.expectEqual(3 * want.len, calls.len);
+    for (calls, 0..) |call, i| {
+        try std.testing.expectEqualStrings(want[i % want.len], call.path);
     }
 }
 
@@ -291,6 +308,32 @@ test "a Retry-After too long to count is waited out on the client's own backoff"
     try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
 }
 
+// Past 2^31 - 1 ms a `Retry-After` is read like one that will not parse: still
+// a throttle, waited out on the client's own backoff. `Io.sleep` takes any
+// wait, so 2.5.0 held the call 24.8 days for 2147484 and for good for
+// 9223372036854775807 (measured 2026-10-03). 2147483 is still waited as given,
+// which is why it is not asserted here.
+test "a Retry-After past 2^31 - 1 ms is waited out on the client's own backoff" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "2147484", "9223372036854775807" }) |value| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route("/api/v2/database/list", .{
+            .status = 429,
+            .body = "{\"rc\":\"RATE_LIMITED\"}",
+            .headers = &.{.{ .name = "Retry-After", .value = value }},
+        });
+
+        var client = try harness.client(.{ .api_key = "key", .retries = 1 });
+        defer client.deinit();
+        const started = Io.Clock.awake.now(harness.io());
+        try std.testing.expectError(error.RateLimited, client.database().list(.{}));
+
+        try std.testing.expectEqual(2, harness.stub.callCount());
+        try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
+    }
+}
+
 // A 404 from a misspelled id is a CLIENT error. Letting it fall through to the
 // retryable server_error default is the mistake three of four VPNDetection SDKs
 // shipped with.
@@ -497,6 +540,32 @@ test "an object storage 5xx before the first byte is retried" {
     try std.testing.expectEqual(body.len, written);
     var read_buffer: [64_000]u8 = undefined;
     try std.testing.expectEqualSlices(u8, body, try scratch.read("data.csv.gz", &read_buffer));
+}
+
+// Object storage's `Retry-After` is bounded like the API's: past 2^31 - 1 ms it
+// is waited out on the backoff, where 2.5.0 held the transfer 24.8 days for
+// 2147484 and for good for 9223372036854775807 (measured 2026-10-03).
+test "an object storage Retry-After past its bound waits the backoff" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "2147484", "9223372036854775807" }) |value| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const body = try support.payload(harness);
+        try support.routeDownload(harness, .ok(body));
+        const arena = harness.stub.arena.allocator();
+        const headers = try arena.dupe(Route.Header, &.{.{ .name = "Retry-After", .value = value }});
+        try harness.stub.sequence(storage_path, try arena.dupe(Route, &.{ .{ .status = 429, .headers = headers }, .ok(body) }));
+
+        var client = try harness.client(.{ .api_key = "key" });
+        defer client.deinit();
+        const started = Io.Clock.awake.now(harness.io());
+        const bytes = try client.database().downloadBytes("bogon_ip_v1", .csvgz, .{});
+        defer gpa.free(bytes);
+
+        try std.testing.expectEqual(2, storageRequests(harness));
+        try std.testing.expectEqualSlices(u8, body, bytes);
+        try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
+    }
 }
 
 // A body that dies part way is NEVER fetched again: a second copy would land
