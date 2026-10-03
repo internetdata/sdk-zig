@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.5.1 - 2026-10-03
+
+### Fixes
+
+- End the device poll's sleep at its deadline, and refuse a bad timeout first ([`013ec28`](https://github.com/internetdata/sdk-zig/commit/013ec280514c797d909a565f6a6ce18445e6b18e))
+- Wait out a Retry-After past 2^31 - 1 ms on the client's own backoff ([`78d5ebe`](https://github.com/internetdata/sdk-zig/commit/78d5ebe1f7c42837aa830315496e9920fcda60b9))
+
 ## 2.5.0 - 2026-09-30
 
 ### Features
