@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.5.2 - 2026-10-04
+
+### Fixes
+
+- Re-pin the spec to 2026.10.03: metadata needs no license ([`6dcedbb`](https://github.com/internetdata/sdk-zig/commit/6dcedbbdb5752821c94a617537661936f5842907))
+
 ## 2.5.1 - 2026-10-03
 
 ### Fixes
