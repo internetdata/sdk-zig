@@ -116,10 +116,13 @@ test "the catalog unwraps a family and its versions" {
     try harness.stub.route("/api/v2/database/list", .ok(
         \\{"databases":[{"base":"bogon_ip","name":"Bogon IP",
         \\ "summary":"Reserved, private or otherwise non-routable IP ranges.",
-        \\ "standing":"licensed","license_type":"standard",
+        \\ "standing":"licensed","open":false,"license_type":"standard",
         \\ "starts":"2026-09-04T18:04:26.431Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\ "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s",
-        \\   "formats":["csvgz","mmdb"]}]}]}
+        \\   "formats":["csvgz","mmdb"]}]},
+        \\ {"base":"asn","name":"ASN","summary":"s","standing":"unlicensed","open":true,
+        \\ "license_type":null,"starts":null,"expires":null,"renews_at":null,"notice_due_at":null,
+        \\ "versions":[{"id":"asn_v1","version":1,"summary":"s","formats":["csvgz"]}]}]}
     ));
 
     var client = try harness.client(.{ .api_key = "key" });
@@ -127,10 +130,14 @@ test "the catalog unwraps a family and its versions" {
     const catalog = try client.database().list(.{});
     defer catalog.deinit();
 
-    try std.testing.expectEqual(1, catalog.value.len);
+    try std.testing.expectEqual(2, catalog.value.len);
     const family = catalog.value[0];
     try std.testing.expectEqualStrings("bogon_ip", family.base);
     try std.testing.expectEqualStrings("licensed", family.standing);
+    // An Open family downloads whatever its standing, which stays as served.
+    try std.testing.expect(!family.open);
+    try std.testing.expect(catalog.value[1].open);
+    try std.testing.expectEqualStrings("unlicensed", catalog.value[1].standing);
     try std.testing.expectEqual(1, family.versions.len);
     try std.testing.expectEqualStrings("bogon_ip_v1", family.versions[0].id);
     try std.testing.expectEqual(1, family.versions[0].version);
@@ -200,7 +207,7 @@ test "the download history keeps a refusal and its nulls" {
     defer harness.deinit();
     try harness.stub.route("/api/v2/database/downloads", .ok(
         \\{"downloads":[{"dataset_id":"bogon_ip_v1","format":"csvgz","outcome":"denied",
-        \\ "sample":true,"bytes":null,"http_status":403,"apikey_id":null,"client_ip":"203.0.113.7",
+        \\ "sample":true,"open":false,"bytes":null,"http_status":403,"apikey_id":null,"client_ip":"203.0.113.7",
         \\ "user_agent":null,"created":"2026-09-04T18:04:26.431Z"}]}
     ));
 
@@ -216,6 +223,7 @@ test "the download history keeps a refusal and its nulls" {
     try std.testing.expect(history.value[0].apikey_id == null);
     try std.testing.expectEqualStrings("203.0.113.7", history.value[0].client_ip.?);
     try std.testing.expect(history.value[0].sample);
+    try std.testing.expect(!history.value[0].open);
 }
 
 test "a limit is only sent when one was asked for" {

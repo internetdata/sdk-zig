@@ -156,13 +156,13 @@ fn servedAsIs(gpa: std.mem.Allocator) !void {
     defer harness.deinit();
     try harness.stub.route("/api/v2/database/list", .ok(
         \\{"databases":[
-        \\ {"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed",
+        \\ {"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed","open":false,
         \\  "license_type":"standard","starts":"2026-09-04T18:04:26.431Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\  "versions":[{"id":"bogon_ip_v1","version":1,"summary":"s","formats":["csvgz","mmdb"]}]},
-        \\ {"base":"cdn_ip","name":"CDN IP","summary":"s","standing":"unlicensed",
+        \\ {"base":"cdn_ip","name":"CDN IP","summary":"s","standing":"unlicensed","open":false,
         \\  "license_type":null,"starts":null,"expires":null,"renews_at":null,"notice_due_at":null,
         \\  "versions":[{"id":"cdn_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]},
-        \\ {"base":"tor_ip","name":"Tor IP","summary":"s","standing":"unlicensed",
+        \\ {"base":"tor_ip","name":"Tor IP","summary":"s","standing":"unlicensed","open":true,
         \\  "versions":[{"id":"tor_ip_v1","version":1,"summary":"s","formats":["csvgz"]}]}]}
     ));
 
@@ -235,7 +235,7 @@ fn appendFamily(
         try body.append(arena, ',');
     }
     try body.print(arena,
-        \\{{"base":"b{d}","name":"n","summary":"s","standing":"{s}","license_type":"{s}",
+        \\{{"base":"b{d}","name":"n","summary":"s","standing":"{s}","open":false,"license_type":"{s}",
         \\ "starts":null,"expires":null,"renews_at":null,"notice_due_at":null,
         \\ "versions":[{{"id":"b{d}_v1","version":1,"summary":"s","formats":["csvgz"]}}]}}
     , .{ index, standing, license_type, index });
