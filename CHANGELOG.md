@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.6.1 - 2026-10-10
+
+### Fixes
+
+- Re-pin the spec to 2026.10.09: rotating a key needs apikeys.reveal ([`b1d81da`](https://github.com/internetdata/sdk-zig/commit/b1d81da13e5f4a6e51d9212a9e691fcfcf1ba494))
+
 ## 2.6.0 - 2026-10-09
 
 ### Features
