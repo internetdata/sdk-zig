@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.6.2 - 2026-10-11
+
+### Fixes
+
+- Read Retry-After as digits or an RFC 9110 date in GMT ([`d06c9bc`](https://github.com/internetdata/sdk-zig/commit/d06c9bcd68083270f087d02d9fb5e28b60ccac2d))
+- Refuse a key holding a control character, and retry an unreadable 2xx ([`3a3d61e`](https://github.com/internetdata/sdk-zig/commit/3a3d61e882965820c8ada585b07b8bd9037537b0))
+
 ## 2.6.1 - 2026-10-10
 
 ### Fixes
