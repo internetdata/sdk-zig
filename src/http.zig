@@ -374,6 +374,18 @@ pub const Transport = struct {
     fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
         const authorization: std.http.Client.Request.Headers.Value =
             if (self.authorization) |value| .{ .override = value } else .omit;
+        // `std.http.Client` writes a header value out as given, so a control
+        // character left inside the key would reach the wire, and a CR LF would
+        // start a header of its own. Refused here, before anything is sent,
+        // because `Client.init`'s error set has no member for it.
+        if (self.authorization) |value| {
+            for (value) |c| {
+                if (c < 0x20 or c == 0x7f) {
+                    diag.setMessage("the API key holds a control character");
+                    return error.BadRequest;
+                }
+            }
+        }
         return self.openWith(url, authorization, .default, diag);
     }
 

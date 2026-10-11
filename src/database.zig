@@ -320,12 +320,36 @@ pub const DatabaseApi = struct {
     ) CallError!Parsed(T) {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
+        // An answer that will not parse is the server's fault like any 5xx, so
+        // each attempt is the request AND the parse, and the retries span both.
+        var delay = http.retry_base_delay;
+        var remaining = options.retries orelse self.client.retries;
+        while (true) {
+            if (self.fetchOnce(T, path, query, options, diag)) |parsed| {
+                return parsed;
+            } else |err| {
+                if (remaining == 0 or !errors.isRetryable(err) or !http.backOff(self.client.io, diag, &delay)) {
+                    return err;
+                }
+                remaining -= 1;
+            }
+        }
+    }
+
+    fn fetchOnce(
+        self: DatabaseApi,
+        comptime T: type,
+        path: []const u8,
+        query: []const Param,
+        options: client_mod.CallOptions,
+        diag: *Diagnostics,
+    ) CallError!Parsed(T) {
         const gpa = self.client.gpa;
 
         const body = try http.send(&self.client.transport, gpa, self.client.io, .{
             .path = path,
             .query = query,
-            .retries = options.retries orelse self.client.retries,
+            .retries = 0,
             .timeout = options.timeout orelse self.client.timeout,
             .diagnostics = diag,
         });

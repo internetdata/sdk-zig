@@ -95,7 +95,7 @@ test "a keyless client sends no authorization header at all" {
     defer harness.deinit();
     try harness.stub.route("/api/v2/database/list", .ok("{\"databases\":[]}"));
 
-    for ([_]?[]const u8{ null, "" }) |api_key| {
+    for ([_]?[]const u8{ null, "", "   ", "\t", " \r\n " }) |api_key| {
         var client = try harness.client(.{ .api_key = api_key });
         defer client.deinit();
         (try client.database().list(.{})).deinit();
@@ -104,7 +104,50 @@ test "a keyless client sends no authorization header at all" {
     for (harness.stub.seen()) |call| {
         try std.testing.expectEqualStrings("", call.authorization);
     }
-    try std.testing.expectEqual(2, harness.stub.callCount());
+    try std.testing.expectEqual(5, harness.stub.callCount());
+}
+
+// `std.http.Client` writes a header value out as given: a CR LF inside the key
+// put a second header on the wire, and any other control character went out
+// whole. The blanks around a key, a file's newline among them, are no part of it.
+test "a key holding a control character is refused before anything is sent" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/list", .ok("{\"databases\":[]}"));
+
+    for ([_][]const u8{ "mk_test\r\nX-Injected: 1", "mk\x01test", "mk_test\x7f", "mk\ttest" }) |api_key| {
+        var client = try harness.client(.{ .api_key = api_key, .retries = 2 });
+        defer client.deinit();
+        var diagnostics: internetdata.Diagnostics = .{};
+        try std.testing.expectError(error.BadRequest, client.database().list(.{ .diagnostics = &diagnostics }));
+        try std.testing.expectEqualStrings("the API key holds a control character", diagnostics.message());
+        try std.testing.expectError(error.BadRequest, client.database().downloadUrl("bogon_ip_v1", .mmdb, .{}));
+    }
+    try std.testing.expectEqual(0, harness.stub.callCount());
+
+    var client = try harness.client(.{ .api_key = " mk_test_1234\r\n" });
+    defer client.deinit();
+    (try client.database().list(.{})).deinit();
+    try std.testing.expectEqualStrings("Bearer mk_test_1234", harness.stub.callFor("/api/v2/database/list").?.authorization);
+}
+
+// A proxy's page or a cut-off body is the server's fault like any 5xx: parsed
+// after the retries were spent, it failed after exactly one request.
+test "a 2xx the call cannot read is retried, carrying its status" {
+    const gpa = std.testing.allocator;
+    const bodies = [_][]const u8{ "<html>gateway</html>", "{\"databases\":", "", "null", "[]", "{}", "{\"databases\":{}}" };
+    for (bodies) |body| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route("/api/v2/database/list", .ok(body));
+        var client = try harness.client(.{ .api_key = "key", .retries = 2 });
+        defer client.deinit();
+        var diagnostics: internetdata.Diagnostics = .{};
+        try std.testing.expectError(error.ServerError, client.database().list(.{ .diagnostics = &diagnostics }));
+        try std.testing.expectEqual(3, harness.stub.callCount());
+        try std.testing.expectEqual(@as(?u16, 200), diagnostics.status);
+    }
 }
 
 // A license covers a FAMILY, and the downloadable ids hang off its versions. A
