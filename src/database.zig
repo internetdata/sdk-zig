@@ -398,9 +398,9 @@ pub const Database = struct {
     /// `licensed` is a live grant, `expired` one whose term has ended, and
     /// `unlicensed` a database published but never bought.
     standing: []const u8,
-    /// An Open database: any organization downloads it, and fetches its
-    /// checksums, with no license, under CC BY-SA 4.0. `standing` still reports
-    /// your own license, which grants more where you hold one.
+    /// An Open database: free under CC BY-SA 4.0. Every organization holds a
+    /// `standard` license to it from the start, which `standing` and
+    /// `license_type` report like any other.
     open: bool,
     /// What your license permits you to do with the data: `evaluation`,
     /// `standard` or `redistribute`. Null when there is no license at all, so
@@ -490,9 +490,7 @@ pub const DownloadAttempt = struct {
     outcome: []const u8,
     /// The evaluation sample rather than the database itself.
     sample: bool,
-    /// Taken under the Open license rather than one of your licenses: an Open
-    /// database downloaded while your organization held no license in term for
-    /// it.
+    /// A download of an Open database.
     open: bool,
     /// Object size at redirect time, NOT bytes delivered: the transfer runs
     /// straight from object storage, so how much of it was taken is never seen.

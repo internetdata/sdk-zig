@@ -177,7 +177,7 @@ test "the catalog unwraps a family and its versions" {
     const family = catalog.value[0];
     try std.testing.expectEqualStrings("bogon_ip", family.base);
     try std.testing.expectEqualStrings("licensed", family.standing);
-    // An Open family downloads whatever its standing, which stays as served.
+    // An Open family's standing stays as served, never derived from `open`.
     try std.testing.expect(!family.open);
     try std.testing.expect(catalog.value[1].open);
     try std.testing.expectEqualStrings("unlicensed", catalog.value[1].standing);
