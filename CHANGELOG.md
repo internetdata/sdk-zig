@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.6.3 - 2026-10-13
+
+### Fixes
+
+- Re-pin the spec to 2026.10.13: Open databases come with a license ([`88700b2`](https://github.com/internetdata/sdk-zig/commit/88700b2571ae0c3090ef2000673b98d89c371a03))
+
 ## 2.6.2 - 2026-10-11
 
 ### Fixes
