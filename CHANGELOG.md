@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.6.4 - 2026-10-15
+
+### Fixes
+
+- Retry an unreadable answer to OAuth discovery and device authorization ([`7cc1db2`](https://github.com/internetdata/sdk-zig/commit/7cc1db2ea49bc06ab4e886d4e25fcdbc77884a05))
+
 ## 2.6.3 - 2026-10-13
 
 ### Fixes
