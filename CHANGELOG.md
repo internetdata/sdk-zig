@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.6.5 - 2026-10-16
+
+### Fixes
+
+- Re-pin the spec to 2026.10.15: three descriptions in US spelling ([`40be0b1`](https://github.com/internetdata/sdk-zig/commit/40be0b18778c08274dc5e156aab5dbe2e1f838bd))
+
 ## 2.6.4 - 2026-10-15
 
 ### Fixes
