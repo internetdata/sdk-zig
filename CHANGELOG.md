@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.7.1 - 2026-10-17
+
+### Fixes
+
+- Refuse a numeric string where a number is due ([`8b6ee98`](https://github.com/internetdata/sdk-zig/commit/8b6ee981ad77157f50ad7b697f22f5e08b89eb7a))
+
 ## 2.7.0 - 2026-10-17
 
 ### Features
