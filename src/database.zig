@@ -3,6 +3,7 @@ const std = @import("std");
 const client_mod = @import("client.zig");
 const errors = @import("errors.zig");
 const http = @import("http.zig");
+const strict = @import("strict.zig");
 
 const CallError = errors.CallError;
 const Diagnostics = errors.Diagnostics;
@@ -364,7 +365,7 @@ pub const DatabaseApi = struct {
         // Parsed from a copy the arena owns, so every string in the answer
         // outlives the body this call frees.
         const owned = try arena.dupe(u8, body);
-        const value = std.json.parseFromSliceLeaky(T, arena, owned, .{
+        const value = strict.parseLeaky(T, arena, owned, .{
             // A field this release has no home for is DROPPED rather than
             // fatal, so the API may grow without breaking a client built today.
             .ignore_unknown_fields = true,

@@ -67,4 +67,5 @@ test {
     _ = @import("errors.zig");
     _ = @import("http.zig");
     _ = @import("oauth.zig");
+    _ = @import("strict.zig");
 }

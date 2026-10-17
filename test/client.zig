@@ -150,6 +150,48 @@ test "a 2xx the call cannot read is retried, carrying its status" {
     }
 }
 
+// `std.json` reads a numeric string into an integer member, so through 2.7.0 a
+// version served as "3" came back as 3 and an `entries` of "42" as 42, each
+// sent once as if it were the answer, where every other SDK refuses one.
+test "a numeric string where an integer is due is retried, carrying its status" {
+    const gpa = std.testing.allocator;
+    const family =
+        \\{"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed","open":false,
+        \\"license_type":"standard","starts":null,"expires":null,"versions":[{"id":"bogon_ip_v1",
+    ;
+    const metadata = "{\"id\":\"bogon_ip_v1\",\"updated\":\"2026-09-04\",\"schema\":{},";
+    const download =
+        \\{"dataset_id":"bogon_ip_v1","format":"csvgz","outcome":"ok","sample":false,"open":true,
+        \\"apikey_id":null,"client_ip":null,"user_agent":null,"created":"2026-09-04T10:00:00Z",
+    ;
+    const cases = [_]struct { path: []const u8, body: []const u8 }{
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"version\":\"3\",\"summary\":\"v1\",\"formats\":[\"csvgz\"]}]}]}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"entries\":\"42\",\"size\":{\"csvgz\":760}}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"entries\":42,\"size\":{\"csvgz\":\"760\"}}" },
+        .{ .path = "/api/v2/database/downloads", .body = "{\"downloads\":[" ++ download ++ "\"bytes\":\"10\",\"http_status\":200}]}" },
+        .{ .path = "/api/v2/database/downloads", .body = "{\"downloads\":[" ++ download ++ "\"bytes\":10,\"http_status\":\"200\"}]}" },
+    };
+    for (cases) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route(case.path, .ok(case.body));
+        var client = try harness.client(.{ .api_key = "key", .retries = 2 });
+        defer client.deinit();
+        var diagnostics: internetdata.Diagnostics = .{};
+        const outcome = if (std.mem.endsWith(u8, case.path, "/list"))
+            if (client.database().list(.{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err
+        else if (std.mem.endsWith(u8, case.path, "/metadata"))
+            if (client.database().metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err
+        else if (client.database().downloads(null, .{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err;
+        std.testing.expectError(error.ServerError, outcome) catch |err| {
+            std.debug.print("{s}\n", .{case.body});
+            return err;
+        };
+        try std.testing.expectEqual(3, harness.stub.callCount());
+        try std.testing.expectEqual(@as(?u16, 200), diagnostics.status);
+    }
+}
+
 // A license covers a FAMILY, and the downloadable ids hang off its versions. A
 // client that reads `base` as an id asks for a database that does not exist.
 test "the catalog unwraps a family and its versions" {
