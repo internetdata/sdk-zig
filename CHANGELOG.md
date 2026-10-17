@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.7.0 - 2026-10-17
+
+### Features
+
+- Re-pin the spec to 2026.10.16: dynamic client registration ([`25b6935`](https://github.com/internetdata/sdk-zig/commit/25b69358c7bca776f02f99c8c7105a65adff12dc))
+
 ## 2.6.5 - 2026-10-16
 
 ### Fixes
