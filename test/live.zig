@@ -58,3 +58,26 @@ test "live catalog" {
     try std.testing.expectEqualStrings(id, info.value.id);
     try std.testing.expect(info.value.size.map.count() > 0);
 }
+
+// Keyless: registering stores nothing until a person approves the client, so
+// it is safe against the real server, which answers a self-registered id.
+test "live register" {
+    const gpa = std.testing.allocator;
+    var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    var client = try internetdata.Client.init(gpa, threaded.io(), .{});
+    defer client.deinit();
+
+    const registration = try client.oauth().register(&.{"http://127.0.0.1:8765/callback"}, .{
+        .client_name = "InternetData SDK check",
+    });
+    defer registration.deinit();
+    std.debug.print("registered {s}..., issued at {d}, shown as {s}\n", .{
+        registration.value.client_id[0..12],
+        registration.value.client_id_issued_at,
+        registration.value.client_name,
+    });
+    try std.testing.expect(std.mem.startsWith(u8, registration.value.client_id, "dcr_"));
+    try std.testing.expectEqualStrings("none", registration.value.token_endpoint_auth_method);
+    try std.testing.expectError(error.OauthRejected, client.oauth().register(&.{"myapp://cb"}, .{}));
+}
