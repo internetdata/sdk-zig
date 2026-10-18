@@ -112,7 +112,6 @@ fn registerClient(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
     defer client.deinit();
     const registration = try client.oauth().register(&.{"http://127.0.0.1:8765/callback"}, .{ .client_name = "Your App" });
     defer registration.deinit();
-    // registration.value.client_id is the client ID for authorizationUrl and exchangeAuthorizationCode.
 }
 
 fn signInByCode(gpa: std.mem.Allocator, threaded: *std.Io.Threaded, code: []const u8) !void {
