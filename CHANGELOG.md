@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.8.1 - 2026-10-18
+
+### Fixes
+
+- Re-pin the spec to 2026.10.18: client_id_issued_at is int64 ([`2fcce32`](https://github.com/internetdata/sdk-zig/commit/2fcce32015d868e20dcaf37852f3abf73833f59d))
+
 ## 2.8.0 - 2026-10-18
 
 ### Features
