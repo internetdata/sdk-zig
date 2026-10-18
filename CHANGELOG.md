@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.8.0 - 2026-10-18
+
+### Features
+
+- Add oauth().register, for RFC 7591 dynamic client registration ([`8899a69`](https://github.com/internetdata/sdk-zig/commit/8899a699c917b9cc1d0443dbde5009f3a07051bc))
+
 ## 2.7.1 - 2026-10-17
 
 ### Fixes
