@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.9.0 - 2026-10-19
+
+### Features
+
+- Build on Zig 0.17.0 as well as 0.16.0 ([`85685c6`](https://github.com/internetdata/sdk-zig/commit/85685c658e41e429fa07772f4866d3b7bcbcd573))
+
 ## 2.8.1 - 2026-10-18
 
 ### Fixes
