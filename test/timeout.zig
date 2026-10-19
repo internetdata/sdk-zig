@@ -14,6 +14,7 @@ const Route = support.Route;
 
 const list_path = "/api/v2/database/list";
 const list_body = "{\"databases\":[]}";
+const padded_list_body = @as([300]u8, @splat(' ')) ++ list_body.*;
 /// Longer than any bound under test, so an unbounded call fails its elapsed
 /// assertion instead of hanging. Tearing the stub down ends it early.
 const stall: Io.Duration = .fromSeconds(5);
@@ -28,7 +29,7 @@ test "a trickled body times out at the bound and its connection is dropped" {
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route(list_path, .{
-        .body = (" " ** 300) ++ list_body,
+        .body = &padded_list_body,
         .trickle = .fromMilliseconds(20),
     });
     var client = try harness.client(.{ .retries = 0, .timeout = .fromMilliseconds(250) });
@@ -218,7 +219,7 @@ test "a download that runs past the timeout still completes" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    const body = "0123456789abcdef" ** 4;
+    const body = "0123456789abcdef" ++ "0123456789abcdef" ++ "0123456789abcdef" ++ "0123456789abcdef";
     try support.routeDownload(harness, .{ .body = body, .stall = .fromMilliseconds(600), .stall_after = 16 });
 
     var scratch = support.Scratch.start();

@@ -35,7 +35,7 @@ fn conforms(comptime T: type, value: Value) bool {
             for (array.items) |item| if (!conforms(pointer.child, item)) return false;
             return true;
         },
-        .@"struct" => |info| {
+        .@"struct" => {
             const object = switch (value) {
                 .object => |object| object,
                 else => return true,
@@ -46,9 +46,11 @@ fn conforms(comptime T: type, value: Value) bool {
                 return true;
             }
             if (comptime std.meta.hasFn(T, "jsonParseFromValue")) return true;
-            inline for (info.fields) |field| {
-                if (object.get(field.name)) |member| {
-                    if (!conforms(field.type, member)) return false;
+            // Field names and `@FieldType` read alike on Zig 0.16 and 0.17, which
+            // reshaped `Type.Struct`.
+            inline for (comptime std.meta.fieldNames(T)) |name| {
+                if (object.get(name)) |member| {
+                    if (!conforms(@FieldType(T, name), member)) return false;
                 }
             }
             return true;
