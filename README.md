@@ -153,7 +153,7 @@ const catalog = client.database().list(.{ .diagnostics = &diagnostics }) catch |
 defer catalog.deinit();
 ```
 
-The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `QuotaExceeded`, `ServerError` and `Network`, plus `OutOfMemory` from the allocator. `diagnostics.message()` is the API's own result code, so a 403 tells you whether it was `NOT_LICENSED` or `LICENSE_EXPIRED`.
+The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `QuotaExceeded`, `ServerError` and `Network`, plus `OutOfMemory` from the allocator. `diagnostics.message()` is the API's own result code, so a 403 tells you whether it was `NOT_LICENSED`, `LICENSE_EXPIRED` or `IP_NOT_ALLOWED`, a call from an address the key or its organization does not allow.
 
 Retries and how many of them are per call as well as per client:
 
