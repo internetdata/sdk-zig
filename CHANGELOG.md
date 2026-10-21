@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.9.1 - 2026-10-21
+
+### Fixes
+
+- Re-pin the spec to 2026.10.21: a 403 for a refused address ([`460f0ef`](https://github.com/internetdata/sdk-zig/commit/460f0efd096ab4064cc644b6bfdbce8c312033db))
+
 ## 2.9.0 - 2026-10-19
 
 ### Features
