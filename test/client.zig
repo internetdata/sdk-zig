@@ -192,6 +192,75 @@ test "a numeric string where an integer is due is retried, carrying its status" 
     }
 }
 
+// A date stays a string here, and a sample row a `Value`, so through 2.9.1 any
+// string passed for a date (`x`, 30 February, no zone, `+24:00`) and any JSON
+// for a row came back as the answer, sent once.
+test "a date out of its form, or a sample row that is no object, is retried, carrying its status" {
+    const gpa = std.testing.allocator;
+    const family =
+        \\{"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed","open":false,
+        \\"license_type":"standard","versions":[{"id":"bogon_ip_v1","version":1,"summary":"v1","formats":["csvgz"]}],
+    ;
+    const metadata = "{\"id\":\"bogon_ip_v1\",\"entries\":44,\"schema\":{},\"size\":{\"csvgz\":760},";
+    const download =
+        \\{"dataset_id":"bogon_ip_v1","format":"csvgz","outcome":"ok","sample":false,"open":true,
+        \\"bytes":10,"http_status":200,"apikey_id":null,"client_ip":null,"user_agent":null,
+    ;
+    const cases = [_]struct { path: []const u8, body: []const u8 }{
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"starts\":\"x\"}]}" },
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"starts\":\"2026-02-30T00:00:00Z\"}]}" },
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"expires\":\"2026-10-05T10:00:00\"}]}" },
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"renews_at\":\"2026-10-05T24:00:00Z\"}]}" },
+        .{ .path = "/api/v2/database/list", .body = "{\"databases\":[" ++ family ++ "\"notice_due_at\":\"2026-10-05T10:00:00+24:00\"}]}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"updated\":\"tomorrow\"}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"updated\":\"2026-11-31\"}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"updated\":\"2026-10-05T10:00:00Z\"}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"updated\":\"2026-10-05\",\"sample\":{\"csvgz\":[null]}}" },
+        .{ .path = "/api/v2/database/metadata", .body = metadata ++ "\"updated\":\"2026-10-05\",\"sample\":{\"csvgz\":[1]}}" },
+        .{ .path = "/api/v2/database/downloads", .body = "{\"downloads\":[" ++ download ++ "\"created\":\"2026-10-05T10:00:00+0500\"}]}" },
+    };
+    for (cases) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route(case.path, .ok(case.body));
+        var client = try harness.client(.{ .api_key = "key", .retries = 2 });
+        defer client.deinit();
+        var diagnostics: internetdata.Diagnostics = .{};
+        const outcome = if (std.mem.endsWith(u8, case.path, "/list"))
+            if (client.database().list(.{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err
+        else if (std.mem.endsWith(u8, case.path, "/metadata"))
+            if (client.database().metadata("bogon_ip_v1", .{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err
+        else if (client.database().downloads(null, .{ .diagnostics = &diagnostics })) |parsed| parsed.deinit() else |err| err;
+        std.testing.expectError(error.ServerError, outcome) catch |err| {
+            std.debug.print("{s}\n", .{case.body});
+            return err;
+        };
+        try std.testing.expectEqual(3, harness.stub.callCount());
+        try std.testing.expectEqual(@as(?u16, 200), diagnostics.status);
+    }
+}
+
+// RFC 3339 lets the `T` and the `Z` be lowercase, and a date-time carry a
+// fraction and any offset within a day.
+test "a date-time in any of RFC 3339's spellings is read" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/list", .ok(
+        \\{"databases":[{"base":"bogon_ip","name":"Bogon IP","summary":"s","standing":"licensed","open":false,
+        \\"license_type":"standard","starts":"2026-10-05t10:00:00z","expires":"2027-10-05T10:00:00.123456-08:00",
+        \\"renews_at":"2027-09-05T10:00:00+05:30","notice_due_at":null,
+        \\"versions":[{"id":"bogon_ip_v1","version":1,"summary":"v1","formats":["csvgz"]}]}]}
+    ));
+    var client = try harness.client(.{ .api_key = "key" });
+    defer client.deinit();
+    const catalog = try client.database().list(.{});
+    defer catalog.deinit();
+    try std.testing.expectEqualStrings("2026-10-05t10:00:00z", catalog.value[0].starts.?);
+    try std.testing.expectEqualStrings("2027-10-05T10:00:00.123456-08:00", catalog.value[0].expires.?);
+    try std.testing.expectEqual(1, harness.stub.callCount());
+}
+
 // A license covers a FAMILY, and the downloadable ids hang off its versions. A
 // client that reads `base` as an id asks for a database that does not exist.
 test "the catalog unwraps a family and its versions" {

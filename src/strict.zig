@@ -1,18 +1,23 @@
-//! JSON decoding that refuses a numeric string where a number is due.
+//! JSON decoding that refuses what `std.json` would read into a wrong answer.
 //!
 //! `std.json` reads `"600"` into an integer member as 600, from a token stream
-//! and from a `Value` alike, and no `ParseOptions` field turns that off. The
-//! other SDKs refuse it as a member of the wrong type, so an answer is parsed
-//! into a `Value` first, every numeric member is checked against `T` with a
-//! comptime walk, and only then is `T` built from that `Value`.
+//! and from a `Value` alike, and no `ParseOptions` field turns that off. A date
+//! stays a string here, so any string would pass for one, and a sample row is a
+//! `Value`, so any JSON would pass for one. The other SDKs refuse all three as
+//! an answer they cannot read, so an answer is parsed into a `Value` first,
+//! checked against `T` with a comptime walk, and only then is `T` built from
+//! that `Value`.
 
 const std = @import("std");
+
+const database = @import("database.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
 
 /// `T` from `body`, or `error.WrongType` when a member `T` declares a number
-/// holds a JSON string, at any depth. Any other way `body` fails to be a `T`
+/// holds a JSON string, a date is not in the form the spec names, or a sample
+/// row is not an object, at any depth. Any other way `body` fails to be a `T`
 /// is the error `std.json` gives for it.
 pub fn parseLeaky(comptime T: type, arena: Allocator, body: []const u8, options: std.json.ParseOptions) !T {
     const value = try std.json.parseFromSliceLeaky(Value, arena, body, .{});
@@ -20,8 +25,48 @@ pub fn parseLeaky(comptime T: type, arena: Allocator, body: []const u8, options:
     return std.json.parseFromValueLeaky(T, arena, value, options);
 }
 
-/// Whether no member `T` declares a number holds a string. Every other
-/// mismatch is left to `std.json`, which refuses it.
+/// The form the spec gives a member that its Zig type cannot hold to.
+const Form = enum {
+    /// `format: date`: RFC 3339's `full-date`, on a day that exists.
+    date,
+    /// `format: date-time`: RFC 3339's `date-time`, with its zone.
+    date_time,
+    /// A map of lists whose every entry is a JSON object, held as `Value`s.
+    objects,
+};
+
+/// One member the spec gives a form its Zig type does not.
+const Entry = struct { T: type, name: []const u8, form: Form };
+
+/// Every such member, by the struct that holds it. A re-pin that adds a date
+/// to one of these types adds it here.
+const rules = [_]Entry{
+    .{ .T = database.Database, .name = "starts", .form = .date_time },
+    .{ .T = database.Database, .name = "expires", .form = .date_time },
+    .{ .T = database.Database, .name = "renews_at", .form = .date_time },
+    .{ .T = database.Database, .name = "notice_due_at", .form = .date_time },
+    .{ .T = database.DatabaseMetadata, .name = "updated", .form = .date },
+    .{ .T = database.DatabaseMetadata, .name = "sample", .form = .objects },
+    .{ .T = database.DownloadAttempt, .name = "created", .form = .date_time },
+};
+
+comptime {
+    for (rules) |entry| {
+        if (!@hasField(entry.T, entry.name)) {
+            @compileError(@typeName(entry.T) ++ " has no member " ++ entry.name);
+        }
+    }
+}
+
+fn formOf(comptime T: type, comptime name: []const u8) ?Form {
+    for (rules) |entry| {
+        if (entry.T == T and std.mem.eql(u8, entry.name, name)) return entry.form;
+    }
+    return null;
+}
+
+/// Whether `value` holds nothing `std.json` would read into a wrong `T`. Every
+/// other mismatch is left to `std.json`, which refuses it.
 fn conforms(comptime T: type, value: Value) bool {
     switch (@typeInfo(T)) {
         .int, .float => return value != .string,
@@ -51,12 +96,83 @@ fn conforms(comptime T: type, value: Value) bool {
             inline for (comptime std.meta.fieldNames(T)) |name| {
                 if (object.get(name)) |member| {
                     if (!conforms(@FieldType(T, name), member)) return false;
+                    if (comptime formOf(T, name)) |form| if (!follows(form, member)) return false;
                 }
             }
             return true;
         },
         else => return true,
     }
+}
+
+/// Whether a member present on the wire keeps its `Form`. A null, or a value
+/// of another JSON type, is the member's type's to judge.
+fn follows(form: Form, member: Value) bool {
+    return switch (form) {
+        .date => member != .string or isDate(member.string),
+        .date_time => member != .string or isDateTime(member.string),
+        .objects => switch (member) {
+            .object => |object| {
+                for (object.values()) |rows| {
+                    if (rows != .array) continue;
+                    for (rows.array.items) |row| if (row != .object) return false;
+                }
+                return true;
+            },
+            else => true,
+        },
+    };
+}
+
+/// `YYYY-MM-DD`, on a day that exists.
+pub fn isDate(text: []const u8) bool {
+    if (text.len != 10 or text[4] != '-' or text[7] != '-') return false;
+    const year = number(text[0..4]) orelse return false;
+    const month = number(text[5..7]) orelse return false;
+    const day = number(text[8..10]) orelse return false;
+    if (month < 1 or month > 12 or day < 1) return false;
+    const days: u32 = switch (month) {
+        2 => if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) 29 else 28,
+        4, 6, 9, 11 => 30,
+        else => 31,
+    };
+    return day <= days;
+}
+
+/// `YYYY-MM-DDTHH:MM:SS`, an optional fraction, then `Z` or `+HH:MM`/`-HH:MM`,
+/// at a time that exists: no hour 24, no minute or second 60, in the time and
+/// in the zone alike. RFC 3339 lets the `T` and the `Z` be lowercase.
+pub fn isDateTime(text: []const u8) bool {
+    if (text.len < 20 or !isDate(text[0..10]) or (text[10] != 'T' and text[10] != 't')) return false;
+    if (!isClock(text[11..19], true)) return false;
+    var rest = text[19..];
+    if (rest[0] == '.') {
+        var digits: usize = 1;
+        while (digits < rest.len and std.ascii.isDigit(rest[digits])) digits += 1;
+        if (digits == 1) return false;
+        rest = rest[digits..];
+    }
+    if (rest.len == 1) return rest[0] == 'Z' or rest[0] == 'z';
+    return rest.len == 6 and (rest[0] == '+' or rest[0] == '-') and isClock(rest[1..6], false);
+}
+
+/// `HH:MM`, or `HH:MM:SS` when `seconds`, within a day.
+fn isClock(text: []const u8, seconds: bool) bool {
+    if (text.len != @as(usize, if (seconds) 8 else 5) or text[2] != ':') return false;
+    if ((number(text[0..2]) orelse return false) > 23) return false;
+    if ((number(text[3..5]) orelse return false) > 59) return false;
+    if (!seconds) return true;
+    return text[5] == ':' and (number(text[6..8]) orelse return false) <= 59;
+}
+
+/// Decimal digits alone, never a sign, an underscore or a base prefix.
+fn number(digits: []const u8) ?u32 {
+    var total: u32 = 0;
+    for (digits) |c| {
+        if (!std.ascii.isDigit(c)) return null;
+        total = total * 10 + (c - '0');
+    }
+    return total;
 }
 
 /// A `std.json.ArrayHashMap(V)`: its own `jsonParseFromValue` reads each
@@ -91,4 +207,33 @@ test "a numeric string where a number is due is refused at any depth" {
     try std.testing.expectEqual(@as(i64, 3), got.items[0].version);
     try std.testing.expectEqual(@as(i64, 760), got.size.map.get("csvgz").?);
     try std.testing.expectEqual(@as(?i64, null), (try parseLeaky(Outer, a, "{\"entries\":null}", options)).entries);
+}
+
+test "a date is a full-date and a date-time carries its zone, each on a day and at a time that exist" {
+    for ([_][]const u8{ "2026-10-20", "2028-02-29", "2000-02-29", "0001-01-01" }) |text| {
+        try std.testing.expect(isDate(text));
+    }
+    for ([_][]const u8{
+        "",           "x",                    "tomorrow",   "monday",     "2026-02-30", "2027-02-29",  "1900-02-29",
+        "2026-04-31", "2026-13-01",           "2026-00-10", "2026-10-00", "2026-10-5",  " 2026-10-20", "+2026-10-20",
+        "2026/10/20", "2026-10-20T10:00:00Z", "20261020",   "2026-W43-2", "2026-293",
+    }) |text| {
+        try std.testing.expect(!isDate(text));
+    }
+    for ([_][]const u8{
+        "2026-10-20T10:00:00Z",   "2026-10-20T23:59:59.999999+05:30", "2026-10-20T00:00:00-23:59",
+        "2028-02-29T12:00:00.5Z", "2026-10-20t10:00:00z",             "2026-10-20t10:00:00+05:30",
+        "0001-01-01T00:00:00Z",
+    }) |text| {
+        try std.testing.expect(isDateTime(text));
+    }
+    for ([_][]const u8{
+        "2026-10-20",                "2026-10-20T10:00:00",          "2026-10-20 10:00:00Z",     "2026-10-20T24:00:00Z",
+        "2026-10-20T10:60:00Z",      "2026-10-20T23:59:60Z",         "2026-10-20T10:00:00+0500", "2026-10-20T10:00:00+05",
+        "2026-10-20T10:00:00+24:00", "2026-10-20T10:00:00+05:60",    "2026-10-20T10:00:00.Z",    "2026-02-30T10:00:00Z",
+        "2026-10-20T10:00Z",         "tomorrow",                     "2026-10-20T10:00:00Z ",    "+2026-10-20T10:00:00Z",
+        "2026-10-20T10:00:00UTC",    "2026-10-20T10:00:00+05:00:30", "20261020T100000Z",         "1760000000",
+    }) |text| {
+        try std.testing.expect(!isDateTime(text));
+    }
 }
