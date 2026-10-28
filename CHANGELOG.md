@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.9.2 - 2026-10-28
+
+### Fixes
+
+- Refuse a date out of its form, or a sample row that is no object ([`91518fe`](https://github.com/internetdata/sdk-zig/commit/91518fe46735affcc0a224258384ea8e6612a447))
+
 ## 2.9.1 - 2026-10-21
 
 ### Fixes
