@@ -88,9 +88,9 @@ pub fn classify(status: u16, retry_after_present: bool) Error {
         return error.Forbidden;
     }
     // Any other 4xx is a CLIENT error, and 404 is the one this API actually
-    // serves: an id it does not publish, or one whose build has not landed.
+    // serves: an ID it does not publish, or one whose build has not landed.
     // Falling through to the server_error default would make it retryable, so a
-    // misspelled id would be asked for three times before failing. Classify on
+    // misspelled ID would be asked for three times before failing. Classify on
     // the RANGE, not on an enumerated list.
     if (status >= 400 and status < 500) {
         return error.BadRequest;

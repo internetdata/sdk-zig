@@ -261,8 +261,8 @@ test "a date-time in any of RFC 3339's spellings is read" {
     try std.testing.expectEqual(1, harness.stub.callCount());
 }
 
-// A license covers a FAMILY, and the downloadable ids hang off its versions. A
-// client that reads `base` as an id asks for a database that does not exist.
+// A license covers a FAMILY, and the downloadable IDs hang off its versions. A
+// client that reads `base` as an ID asks for a database that does not exist.
 test "the catalog unwraps a family and its versions" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -496,7 +496,7 @@ test "a Retry-After past 2^31 - 1 ms is waited out on the client's own backoff" 
     }
 }
 
-// A 404 from a misspelled id is a CLIENT error. Letting it fall through to the
+// A 404 from a misspelled ID is a CLIENT error. Letting it fall through to the
 // retryable server_error default is the mistake three of four VPNDetection SDKs
 // shipped with.
 test "an unknown database is not retried" {

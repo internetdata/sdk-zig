@@ -2,11 +2,11 @@
 //!
 //! The transfer is budgeted before it starts. Metadata publishes a size per
 //! format, and that size is checked against the ceiling below FIRST, so a
-//! mistaken database id can never quietly pull one of the gigabyte databases
+//! mistaken database ID can never quietly pull one of the gigabyte databases
 //! through CI.
 //!
 //! Nothing here names a database this organization is not licensed for. The
-//! unlicensed id a refusal is asserted against is picked out of the listing at
+//! unlicensed ID a refusal is asserted against is picked out of the listing at
 //! run time, so the suite cannot rot when a license changes and cannot publish a
 //! customer relationship the API deliberately hides.
 
@@ -49,7 +49,7 @@ test "the catalogue answers the schema the client was written from" {
             try staging.expectOneOf("license_type", right, &license_types);
         }
         // The point of the family shape: a license covers the family, and these
-        // are the ids the download, checksum and metadata calls take.
+        // are the IDs the download, checksum and metadata calls take.
         try std.testing.expect(family.versions.len > 0);
         for (family.versions) |version| {
             try std.testing.expect(version.id.len > 0);
@@ -211,7 +211,7 @@ test "the download history answers the documented shape" {
     std.debug.print("{d} recent download attempt(s)\n", .{history.value.len});
 }
 
-/// A real catalogue id this organization holds no license for, taken from the
+/// A real catalogue ID this organization holds no license for, taken from the
 /// listing rather than hardcoded so the suite cannot name one it should not and
 /// cannot rot when a license changes.
 fn firstUnlicensed(catalog: []const internetdata.Database) ?[]const u8 {

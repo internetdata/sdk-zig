@@ -312,7 +312,7 @@ fn readHead(reader: *Io.Reader, out: []u8) ![]const u8 {
 }
 
 /// The path, with any query string dropped: routes are keyed by path, and the
-/// query carries the database id and the format, which each test already knows.
+/// query carries the database ID and the format, which each test already knows.
 fn requestTarget(head: []const u8) ?[]const u8 {
     const target = rawTarget(head) orelse return null;
     const query = std.mem.indexOfScalar(u8, target, '?') orelse return target;

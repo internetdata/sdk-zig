@@ -739,7 +739,7 @@ fn allDigits(text: []const u8) bool {
     return true;
 }
 
-/// Percent-encodes everything outside the unreserved set, so a database id that
+/// Percent-encodes everything outside the unreserved set, so a database ID that
 /// is not what the API documents cannot escape its query parameter.
 pub fn appendEncoded(gpa: Allocator, out: *std.ArrayList(u8), text: []const u8) Allocator.Error!void {
     for (text) |c| {

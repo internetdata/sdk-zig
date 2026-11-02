@@ -13,7 +13,7 @@ const Parsed = std.json.Parsed;
 /// A format a database is published in.
 ///
 /// Not every database is built in every format: the `_provider` catalogs are
-/// keyed by provider id rather than by IP range, so no MMDB exists for them, and
+/// keyed by provider ID rather than by IP range, so no MMDB exists for them, and
 /// asking for one is a 400 rather than an empty answer.
 /// `DatabaseVersion.formats` says which exist.
 ///
@@ -58,7 +58,7 @@ pub const DatabaseApi = struct {
     /// The published catalog, with your organization's license beside each
     /// family. The caller owns the result and must `deinit` it.
     ///
-    /// A license covers a family, so the id you pass to a download is one of
+    /// A license covers a family, so the ID you pass to a download is one of
     /// `Database.versions`, not `Database.base`.
     ///
     /// **This is the SERVER's answer about YOUR key, and nothing else assembles
@@ -381,7 +381,7 @@ pub const DatabaseApi = struct {
 /// because `Database` is the API surface `Client.database()` returns.
 ///
 /// One database FAMILY, with your organization's license beside it. A license
-/// covers the family, while a download names one version of it, so the ids
+/// covers the family, while a download names one version of it, so the IDs
 /// `download`, `downloadBytes`, `downloadUrl`, `checksums` and `metadata` take
 /// come from `versions` rather than from here.
 ///
@@ -423,9 +423,9 @@ pub const Database = struct {
 };
 
 /// Mirrors `components.schemas.DatabaseVersion`. One published version of a
-/// family, and the only place a downloadable id comes from.
+/// family, and the only place a downloadable ID comes from.
 pub const DatabaseVersion = struct {
-    /// The versioned id, e.g. `bogon_ip_v1`. This is what you download.
+    /// The versioned ID, e.g. `bogon_ip_v1`. This is what you download.
     id: []const u8,
     version: i64,
     summary: []const u8,

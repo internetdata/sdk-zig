@@ -22,7 +22,7 @@ const Io = std.Io;
 
 /// What a test is allowed to remember about one request.
 pub const Fact = struct {
-    /// Path only. A query string carries the database id and the format, so it
+    /// Path only. A query string carries the database ID and the format, so it
     /// is dropped before anything is stored.
     path: []const u8,
     /// Whether the request carried the suite's key. Without this a run is
