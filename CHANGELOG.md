@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.9.3 - 2026-11-03
+
+### Fixes
+
+- Re-pin the spec to 2026.11.02: ID and IDs in its descriptions ([`1be198e`](https://github.com/internetdata/sdk-zig/commit/1be198e4b3a6d53a3437f01a667c2fee87063e26))
+- Write ID and IDs in prose, never id or ids ([`1ae3696`](https://github.com/internetdata/sdk-zig/commit/1ae3696b897ff37dd5b307bf8e0686c46365aaa6))
+
 ## 2.9.2 - 2026-10-28
 
 ### Fixes
