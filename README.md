@@ -63,7 +63,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### The catalog
 
-A license covers a database *family*, and a download names one of its versions, so the id you pass to everything else comes from `versions`:
+A license covers a database *family*, and a download names one of its versions, so the ID you pass to everything else comes from `versions`:
 
 ```zig
 const catalog = try client.database().list(.{});
@@ -161,7 +161,7 @@ Retries and how many of them are per call as well as per client:
 const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
-`RateLimited` is a 429 that carries `Retry-After`, and the library retries it for you. `QuotaExceeded` is a 429 without one, which it never retries. InternetData's database API has no quota, so you won't see `QuotaExceeded` from it. Nothing else in the 4xx range is retried at all: a misspelled database id is a 404, and asking for it three times gets the same answer three times.
+`RateLimited` is a 429 that carries `Retry-After`, and the library retries it for you. `QuotaExceeded` is a 429 without one, which it never retries. InternetData's database API has no quota, so you won't see `QuotaExceeded` from it. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
 
 ### Timeouts
 
