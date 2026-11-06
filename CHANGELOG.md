@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.9.4 - 2026-11-06
+
+### Fixes
+
+- End a device poll once its wait runs to the deadline ([`ef5e53a`](https://github.com/internetdata/sdk-zig/commit/ef5e53a5a5589727859cce79193427361ca26354))
+- Re-pin the spec to 2026.11.05: the download's build parameter ([`00033ff`](https://github.com/internetdata/sdk-zig/commit/00033ffaa200dbc180f7aab02d43a0cb7f23cef8))
+
 ## 2.9.3 - 2026-11-03
 
 ### Fixes
