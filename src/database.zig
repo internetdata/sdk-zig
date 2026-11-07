@@ -149,15 +149,17 @@ pub const DatabaseApi = struct {
         format: Format,
         options: client_mod.CallOptions,
     ) CallError![]u8 {
+        const build = options.build orelse "";
         const query = [_]Param{
             .{ .name = "id", .value = id },
             .{ .name = "format", .value = format.toString() },
+            .{ .name = "build", .value = build },
         };
         var scratch: Diagnostics = .{};
         return http.send(&self.client.transport, self.client.gpa, self.client.io, .{
             .kind = .location,
             .path = "/api/v2/database/download",
-            .query = &query,
+            .query = query[0..if (build.len == 0) 2 else 3],
             .retries = options.retries orelse self.client.retries,
             .timeout = options.timeout orelse self.client.timeout,
             .diagnostics = options.diagnostics orelse &scratch,
@@ -288,6 +290,7 @@ pub const DatabaseApi = struct {
             .retries = options.retries,
             .timeout = options.timeout,
             .diagnostics = diag,
+            .build = options.build,
         });
         defer self.client.gpa.free(url);
 

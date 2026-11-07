@@ -45,6 +45,13 @@ pub const CallOptions = struct {
     /// the call fails. A Zig error carries no payload, so this is how the detail
     /// behind one is reached.
     diagnostics: ?*Diagnostics = null,
+    /// One build of the database, as a `database.updated` webhook names it
+    /// (`20261105.0t53s5`), so the file is the one whose `sha256` the webhook
+    /// carries. Read by `downloadUrl`, `download` and `downloadBytes` alone;
+    /// null or empty is the build that is live. A build is kept 7 days; past
+    /// that the call fails with `error.BadRequest` and the result code
+    /// `BUILD_GONE` in `diagnostics`.
+    build: ?[]const u8 = null,
 };
 
 /// A client for the InternetData API: licensed IP and network databases,

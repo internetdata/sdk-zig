@@ -111,6 +111,14 @@ defer gpa.free(bytes);
 
 `downloadUrl` hands back the link rather than the bytes, so you choose how to move the file, hand it to a downloader, or pass it on without passing on your API key. The link is presigned and authorizes itself; it authorizes the START of a transfer, so one already running is not interrupted when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: object storage has no business holding your credential.
 
+Each of the three downloads the build that is live unless `build` names one. A `database.updated` webhook names the build it announces and carries its `sha256`, so a receiver that downloads after the next publish asks for that build to get the file the hash is of:
+
+```zig
+_ = try client.database().download("vpn_ip_v1", .mmdb, "vpn_ip_v1.mmdb", .{ .build = build });
+```
+
+A build is kept 7 days. Past that the call fails with `error.BadRequest`, `diagnostics` carrying `BUILD_GONE`, and downloading without `build` fetches the live one.
+
 ### Verifying a download
 
 `checksums` publishes all four digests for one published file, so you can check the bytes you received:

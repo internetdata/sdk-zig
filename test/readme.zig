@@ -52,6 +52,9 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
     const bytes = try client.database().downloadBytes(id, .csvgz, .{});
     defer gpa.free(bytes);
 
+    const build: []const u8 = "20261105.0t53s5";
+    _ = try client.database().download("vpn_ip_v1", .mmdb, "vpn_ip_v1.mmdb", .{ .build = build });
+
     const digests = try client.database().checksums(id, .csvgz, .{});
     defer digests.deinit();
     std.debug.print("{s}\n", .{digests.value.sha256});

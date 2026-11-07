@@ -576,6 +576,63 @@ test "download streams a database to disk and sends no key to object storage" {
     try std.testing.expectEqualStrings("", harness.stub.callFor(storage_path).?.authorization);
 }
 
+test "a build goes on the download request, and none without one" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try support.routeDownload(harness, .ok(try support.payload(harness)));
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key" });
+    defer client.deinit();
+    const db = client.database();
+    const named = "20261105.0t53s5";
+
+    gpa.free(try db.downloadUrl("bogon_ip_v1", .csvgz, .{ .build = named }));
+    gpa.free(try db.downloadBytes("bogon_ip_v1", .csvgz, .{ .build = named }));
+    _ = try db.download("bogon_ip_v1", .csvgz, scratch.path("built.csv.gz"), .{ .build = named });
+    gpa.free(try db.downloadUrl("bogon_ip_v1", .csvgz, .{ .build = "" }));
+    gpa.free(try db.downloadBytes("bogon_ip_v1", .csvgz, .{}));
+
+    const with_build = "/api/v2/database/download?id=bogon_ip_v1&format=csvgz&build=" ++ named;
+    const live = "/api/v2/database/download?id=bogon_ip_v1&format=csvgz";
+    const want = [_][]const u8{ with_build, with_build, with_build, live, live };
+    var asked: usize = 0;
+    for (harness.stub.seen()) |call| {
+        if (!std.mem.eql(u8, call.path, "/api/v2/database/download")) continue;
+        try std.testing.expect(asked < want.len);
+        try std.testing.expectEqualStrings(want[asked], call.target);
+        asked += 1;
+    }
+    try std.testing.expectEqual(want.len, asked);
+}
+
+test "a gone build is a bad request, asked once" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v2/database/download", .{
+        .status = 410,
+        .body = "{\"rc\":\"BUILD_GONE\"}",
+    });
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 2 });
+    defer client.deinit();
+    var diagnostics: internetdata.Diagnostics = .{};
+
+    try std.testing.expectError(
+        error.BadRequest,
+        client.database().downloadUrl("bogon_ip_v1", .csvgz, .{
+            .build = "20261029.aaaaaa",
+            .diagnostics = &diagnostics,
+        }),
+    );
+    try std.testing.expectEqualStrings("BUILD_GONE", diagnostics.message());
+    try std.testing.expectEqual(1, harness.stub.callCount());
+}
+
 // The bytes have to hash to what `checksums` publishes, so they are read
 // UNDECOMPRESSED. Without this the file on disk would be whatever object storage
 // chose to encode it as.
