@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.10.0 - 2026-11-07
+
+### Features
+
+- Download a named build: CallOptions.build reaches downloadUrl, download and downloadBytes ([`9d49c0b`](https://github.com/internetdata/sdk-zig/commit/9d49c0bcd775b9408e81c180dbf812e334f1e0fd))
+
 ## 2.9.4 - 2026-11-06
 
 ### Fixes
