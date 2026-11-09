@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.10.1 - 2026-11-09
+
+### Fixes
+
+- Re-pin the spec to 2026.11.08: the token and revoke descriptions ([`1e09027`](https://github.com/internetdata/sdk-zig/commit/1e090273e30d5c9a7fa64aa3cd334bcc9339c8e3))
+
 ## 2.10.0 - 2026-11-07
 
 ### Features
