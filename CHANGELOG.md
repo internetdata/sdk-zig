@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.11.0 - 2026-11-13
+
+### Features
+
+- Look up an address, an AS or a domain, on api.internetdata.io ([`500f7f2`](https://github.com/internetdata/sdk-zig/commit/500f7f23862f35e62872e656b3815850e57f25da))
+
 ## 2.10.1 - 2026-11-09
 
 ### Fixes
