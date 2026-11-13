@@ -5,12 +5,12 @@
 
 The official Zig client library for the [InternetData](https://internetdata.io) API.
 
-The library helps you browse and download InternetData's licensed IP and ASN databases: geolocation, anonymity, ownership and network data, published as CSV.GZ and MMDB.
+It tells you what InternetData's databases say about an IP address, an AS or a domain, and downloads the licensed databases themselves as CSV.GZ or MMDB.
 
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.10.1
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.11.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -24,28 +24,26 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-Every database endpoint published today needs an API key carrying the `db.download` scope. Create a key in the [console](https://app.internetdata.io); keys are default-deny, so an existing one does not reach these endpoints until the scope is added to it. `api_key` is optional at construction: a client built without one sends no `Authorization` header rather than refusing to build, so it is ready for a dataset served without a license.
+**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, limited per address per minute.
 
 ```zig
 const std = @import("std");
 const internetdata = @import("internetdata");
 
 pub fn main(init: std.process.Init) !void {
-    var client = try internetdata.Client.init(init.gpa, init.io, .{ .api_key = key });
+    var client = try internetdata.Client.init(init.gpa, init.io, .{});
     defer client.deinit();
 
-    const catalog = try client.database().list(.{});
-    defer catalog.deinit();
+    const result = try client.lookup("146.70.116.130");
+    defer result.deinit();
 
-    for (catalog.value) |family| {
-        std.debug.print("{s} ({s})\n", .{ family.base, family.standing });
-    }
+    std.debug.print("{s}\n", .{result.value.location.country}); // AT
+    std.debug.print("{s}\n", .{result.value.asn.name});         // M247 Europe SRL
+    std.debug.print("{s}\n", .{result.value.company.name});     // who uses the address
 }
 ```
 
-The whole program is in [example/catalog.zig](example/catalog.zig); `zig build example` builds it.
-
-Every call lives under `client.database()`. The downloads are the whole of this API today, but the sibling VPNDetection client spells the same seven calls the same way, so a program holding both does not have to remember which one is flat.
+The whole program is in [example/lookup.zig](example/lookup.zig); `zig build example` builds it.
 
 `init.io` is the `std.Io` implementation your program already runs on. Outside `main`, build your own:
 
@@ -53,13 +51,164 @@ Every call lives under `client.database()`. The downloads are the whole of this 
 var threaded: std.Io.Threaded = .init(gpa, .{});
 defer threaded.deinit();
 
-var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
+var client = try internetdata.Client.init(gpa, threaded.io(), .{});
 defer client.deinit();
 ```
 
 ### Memory
 
-Everything the client hands back is allocated with the allocator you gave `init`, and is yours to free. The catalog calls return a `std.json.Parsed` that owns its arena, and `downloadUrl` and `downloadBytes` return slices. The test suite runs under `std.testing.allocator`, so a leak fails the build.
+Everything the client hands back is allocated with the allocator you gave `init`, and is yours to free. A `Lookup` and a `Batch` each carry a `deinit`, the catalog calls return a `std.json.Parsed` that owns its arena, and `downloadUrl` and `downloadBytes` return slices. The test suite runs under `std.testing.allocator`, so a leak fails the build.
+
+### With an API key
+
+Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag, the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field, 100 lookups a day. Create a key in the [console](https://app.internetdata.io), then pass it in:
+
+```zig
+var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
+defer client.deinit();
+
+const result = try client.lookup("146.70.116.130");
+defer result.deinit();
+
+std.debug.print("{}\n", .{result.value.is_vpn orelse false});    // true, on a paid plan
+std.debug.print("{s}\n", .{result.value.vpn.?.provider_name.?}); // Mullvad, on a paid plan
+std.debug.print("{s}\n", .{result.value.location.city.?});       // Vienna, on a paid plan
+```
+
+The blanks around a key, a file's trailing newline among them, are dropped, and a key of blanks alone is no key at all. A key holding any other control character is refused: every call that would send it fails with `BadRequest` before anything leaves the client.
+
+### AS and domain lookups
+
+```zig
+const network = try client.lookupAsn(9009);
+defer network.deinit();
+std.debug.print("{s}\n", .{network.value.name}); // M247 Europe SRL
+
+const domain = try client.lookupDomain("example.com");
+defer domain.deinit();
+std.debug.print("{}\n", .{domain.value.has_mx});
+```
+
+Both answer on every plan, and a paid one adds an AS's Whois record and the prefixes it announces with their RPKI status, and a domain's DNS records, its organization's IP ranges and whether it's a disposable email domain. Neither is cached or batched. `lookupAsnWith` and `lookupDomainWith` take a call's own options. `lookup` takes an IP address alone, and fails anything else with `BadRequest` before sending it.
+
+### Your own address
+
+```zig
+const result = try client.myIp();
+defer result.deinit();
+
+std.debug.print("{s}\n", .{result.value.ip});   // the address we saw this call come from
+```
+
+Same answer `lookup` would give for that address, and the same cost against your allowance. It is deliberately not cached: which address you are is the whole question, and a machine that moves between networks would otherwise be told where it used to be.
+
+### Your plan and usage
+
+```zig
+const acct = try client.myEntitlement();
+defer acct.deinit();
+
+std.debug.print("{s}\n", .{acct.value.plan.key});        // max
+std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
+```
+
+Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on the free plan; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+
+Both are yours to free, like everything else the client hands back. `myIpWith` and `myEntitlementWith` take this call's own retry budget and a `Diagnostics`.
+
+### Batch lookup
+
+Look up many addresses at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel. The batch endpoint needs a paid plan:
+
+```zig
+var batch = try client.lookupBatch(&.{ "146.70.116.130", "8.8.8.8", "1.1.1.1" }, .{});
+defer batch.deinit();
+
+for (batch.keys(), batch.values()) |ip, entry| {
+    switch (entry) {
+        .ok => |answer| std.debug.print("{s}: {s}\n", .{ ip, answer.value.asn.name }),
+        .failed => |failure| std.debug.print("{s}: {s}\n", .{ ip, failure.diagnostics.message() }),
+    }
+}
+```
+
+Results are keyed by address, in the order you first listed each one, so duplicates in your list collapse into a single entry and one address failing never loses the rest: it carries its error as its value, with the status the API would have given that address on its own.
+
+How many chunks are in flight at once, and how many times a failed chunk is retried, are configurable per call:
+
+```zig
+var batch = try client.lookupBatch(many_ips, .{ .concurrency = 4, .retries = 4 });
+defer batch.deinit();
+```
+
+A batch is only as concurrent as the `std.Io` you gave the client: `std.Io.Threaded` runs the requests on its thread pool, and an implementation that cannot start a second task answers them one at a time.
+
+### Caching
+
+Address lookups are cached by default, so repeat lookups of the same address are free:
+
+```zig
+const first = try client.lookup("146.70.116.130");  // API request
+defer first.deinit();
+
+const second = try client.lookup("146.70.116.130"); // no API request, served from the cache
+defer second.deinit();
+```
+
+You can change the default cache variables (max size, TTL) on initialization, or even disable it:
+
+```zig
+var client = try internetdata.Client.init(gpa, io, .{
+    .cache = .{ .max_entries = 50_000, .ttl = .fromSeconds(6 * 60 * 60) },
+});
+
+var uncached = try internetdata.Client.init(gpa, io, .{ .cache = null });
+```
+
+Nothing else is cached. What your organization may download depends on the key, so a listing held from one client is not an answer for another.
+
+### Private and reserved addresses
+
+Private, loopback, link-local, documentation and multicast addresses (and their IPv6 equivalents, including the 6to4 and Teredo ranges) are answered locally, so they cost no request and no quota. The answer is the one the API gives such an address on a paid plan, so it carries every member whatever your plan; don't read your plan off it:
+
+```zig
+const result = try client.lookup("192.168.1.1");
+defer result.deinit();
+
+result.value.is_bogon; // true
+result.raw.len;        // 0, this answer was computed rather than served
+```
+
+The check is available on the client, which is handy when your inputs are addresses anyway:
+
+```zig
+client.isBogon("10.0.0.1"); // true
+client.isBogon("8.8.8.8");  // false
+```
+
+It is also callable on its own, if you want it without a client:
+
+```zig
+internetdata.isBogon("10.0.0.1"); // true
+```
+
+### Database downloads
+
+If your key carries the `db.download` scope, the licensed databases are available through `client.database()`. Keys are default-deny, so an existing one doesn't reach them until the scope is added to it.
+
+```zig
+var client = try internetdata.Client.init(init.gpa, init.io, .{ .api_key = key });
+defer client.deinit();
+
+const catalog = try client.database().list(.{});
+defer catalog.deinit();
+
+for (catalog.value) |family| {
+    std.debug.print("{s} ({s})\n", .{ family.base, family.standing });
+}
+```
+
+The whole program is in [example/catalog.zig](example/catalog.zig).
 
 ### The catalog
 
@@ -149,7 +298,7 @@ Failures are values in `internetdata.Error`, and the detail behind one arrives i
 ```zig
 var diagnostics: internetdata.Diagnostics = .{};
 
-const catalog = client.database().list(.{ .diagnostics = &diagnostics }) catch |err| {
+const result = client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnostics }) catch |err| {
     std.debug.print("{s} retryable={} status={?} {s}\n", .{
         internetdata.kindName(err),
         internetdata.isRetryable(err),
@@ -158,10 +307,10 @@ const catalog = client.database().list(.{ .diagnostics = &diagnostics }) catch |
     });
     return err;
 };
-defer catalog.deinit();
+defer result.deinit();
 ```
 
-The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `QuotaExceeded`, `ServerError` and `Network`, plus `OutOfMemory` from the allocator. `diagnostics.message()` is the API's own result code, so a 403 tells you whether it was `NOT_LICENSED`, `LICENSE_EXPIRED` or `IP_NOT_ALLOWED`, a call from an address the key or its organization does not allow.
+The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `QuotaExceeded`, `ServerError` and `Network`, plus `OutOfMemory` from the allocator. `diagnostics.message()` is the API's own explanation, and a database call's result code, so a 403 there tells you whether it was `NOT_LICENSED`, `LICENSE_EXPIRED` or `IP_NOT_ALLOWED`, a call from an address the key or its organization does not allow.
 
 Retries and how many of them are per call as well as per client:
 
@@ -169,27 +318,23 @@ Retries and how many of them are per call as well as per client:
 const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
-`RateLimited` is a 429 that carries `Retry-After`, and the library retries it for you. `QuotaExceeded` is a 429 without one, which it never retries. InternetData's database API has no quota, so you won't see `QuotaExceeded` from it. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
+`RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. `RateLimited` carries `Retry-After`, as Unlimited's per-minute limit does, and the library waits and retries it for you. `QuotaExceeded` doesn't: your key's overage cap is reached, raising it in Billing is what helps, and the library never retries it. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
 
 ### Timeouts
 
 Each attempt of a call gets 30 seconds by default, from connecting to the last byte of the answer. Set your own with `timeout`, on the client or on a single call:
 
 ```zig
-var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
+var client = try internetdata.Client.init(gpa, threaded.io(), .{ .timeout = .fromSeconds(10) });
 defer client.deinit();
 
-const quick = try client.database().list(.{ .timeout = .fromMilliseconds(500) });
-defer quick.deinit();
+const result = try client.lookupWith("1.1.1.1", .{ .timeout = .fromMilliseconds(500) });
+defer result.deinit();
 ```
 
-A call's own value replaces the client's, longer or shorter, and `OauthOptions` and `DeviceAuthorizationOptions` take one too. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way, and `pollDeviceToken` holds each request to it rather than the whole wait. A timeout has to be positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years. A call given one outside that fails with `error.BadRequest` without sending anything, and `Client.init` asserts it.
+A call's own value replaces the client's, longer or shorter, and `BatchOptions`, `OauthOptions` and `DeviceAuthorizationOptions` take one too. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large database is never cut off part way, and `pollDeviceToken` holds each request to it rather than the whole wait. A timeout has to be positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years. A call given one outside that fails with `error.BadRequest` without sending anything, and `Client.init` asserts it.
 
 The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
-
-### Nothing is cached
-
-The client caches nothing. What your organization may see depends on the key, so a listing held from one client is not an answer for another, and the catalog is small enough that re-reading it costs less than being wrong about whose it was.
 
 ### Sign in with OAuth (device flow)
 
@@ -243,13 +388,24 @@ defer registration.deinit();
 
 Each redirect URI must be https on a public host name, or http on a loopback address, which then matches any port. Nothing is kept until a person approves the client, so an app with no client ID saved can simply register again.
 
+### Absent is not false
+
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+
+```zig
+const vpn = result.value.is_vpn orelse false;    // when you only want the flag
+if (result.value.is_vpn == null) { ... }         // on Unlimited: not in your plan
+if (result.value.location.city == null) { ... }  // the same, inside an object every plan answers
+if (result.value.trial_expired == true) { ... }  // a free-plan key's daily trial is spent
+```
+
 ## Other Libraries
 
 There are official InternetData client libraries available for many languages including PHP, Python, Go, Java, and Ruby. See our GitHub at https://github.com/internetdata for more.
 
 ## About InternetData
 
-Geolocation, anonymity, ownership and network databases for IP addresses and AS numbers, licensed as files you download and query yourself.
+Geolocation, anonymity, ownership and network data for IP addresses, AS numbers and domains, looked up over the API or licensed as files you download and query yourself.
 
 [<img src="https://s3.internetdata.io/internetdata-public/brand/mark.svg" alt="InternetData" height="64"/>](https://internetdata.io/)
 

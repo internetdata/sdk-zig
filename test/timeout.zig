@@ -14,6 +14,7 @@ const Route = support.Route;
 
 const list_path = "/api/v2/database/list";
 const list_body = "{\"databases\":[]}";
+const ip = "9.9.9.9";
 const padded_list_body = @as([300]u8, @splat(' ')) ++ list_body.*;
 /// Longer than any bound under test, so an unbounded call fails its elapsed
 /// assertion instead of hanging. Tearing the stub down ends it early.
@@ -93,12 +94,14 @@ test "a per-call timeout below the client's fires, and the next call keeps the c
 // Zero or below, every attempt times out before it starts, so the call would
 // fail as a network error only after the whole backoff; past the bound the
 // deadline overflows and the process panics. Both are refused where they are
-// set, on every call, before a request.
+// set, on every call, before a request - and before a bogon, a cached answer or
+// the poll's first wait, which need none.
 test "a timeout no attempt can meet is refused before any request" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route(list_path, .ok(list_body));
+    try harness.stub.routeLookup("1.1.1.1");
     try support.routeDownload(harness, .ok("unused"));
     var scratch = support.Scratch.start();
     defer scratch.deinit();
@@ -107,6 +110,10 @@ test "a timeout no attempt can meet is refused before any request" {
     defer client.deinit();
     const database = client.database();
     const oauth = client.oauth();
+    const cached = "1.1.1.1";
+    const bogon = "10.0.0.1";
+    (try client.lookup(cached)).deinit();
+    try std.testing.expectEqual(1, harness.stub.callCount());
 
     const refused = [_]Io.Duration{
         .zero,
@@ -119,6 +126,18 @@ test "a timeout no attempt can meet is refused before any request" {
         const options: internetdata.CallOptions = .{ .timeout = timeout, .diagnostics = &diagnostics };
         const oauth_options: internetdata.OauthOptions = .{ .timeout = timeout, .diagnostics = &diagnostics };
         const start = Io.Clock.awake.now(harness.io());
+        try std.testing.expectError(error.BadRequest, client.lookupWith(ip, options));
+        try std.testing.expectError(error.BadRequest, client.lookupWith(cached, options));
+        try std.testing.expectError(error.BadRequest, client.lookupWith(bogon, options));
+        try std.testing.expectError(error.BadRequest, client.lookupAsnWith(9009, options));
+        try std.testing.expectError(error.BadRequest, client.lookupDomainWith("example.com", options));
+        try std.testing.expectError(error.BadRequest, client.myIpWith(options));
+        try std.testing.expectError(error.BadRequest, client.myEntitlementWith(options));
+        var batch = try client.lookupBatch(&.{ ip, "8.8.8.8", cached, bogon }, .{ .timeout = timeout });
+        defer batch.deinit();
+        for (batch.values()) |entry| {
+            try std.testing.expectEqual(error.BadRequest, entry.failed.err);
+        }
         try std.testing.expectError(error.BadRequest, database.list(options));
         try std.testing.expectError(error.BadRequest, database.metadata("bogon_ip_v1", options));
         try std.testing.expectError(error.BadRequest, database.checksums("bogon_ip_v1", .csvgz, options));
@@ -153,12 +172,12 @@ test "a timeout no attempt can meet is refused before any request" {
         try std.testing.expect(since(harness, start) < 250);
         try std.testing.expect(std.mem.startsWith(u8, diagnostics.message(), "timeout must be positive"));
     }
-    try std.testing.expectEqual(0, harness.stub.callCount());
+    try std.testing.expectEqual(1, harness.stub.callCount());
     try std.testing.expect(!scratch.exists("data.csv.gz.part"));
 
     // The bound itself is a timeout like any other.
     (try database.list(.{ .timeout = .fromNanoseconds(std.math.maxInt(i64)) })).deinit();
-    try std.testing.expectEqual(1, harness.stub.callCount());
+    try std.testing.expectEqual(2, harness.stub.callCount());
 }
 
 // Each call against the one path it stalls, first on the client's bound, then
@@ -289,6 +308,8 @@ test "a call completes on an Io that cannot start a concurrent task" {
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route(list_path, .ok(list_body));
+    try harness.stub.routeLookup(ip);
+    try harness.stub.routeLookup("1.1.1.1");
     var url_buffer: [64]u8 = undefined;
     var client = try internetdata.Client.init(gpa, NoConcurrency.install(harness.io()), .{
         .base_url = harness.stub.baseUrl(&url_buffer),
@@ -298,12 +319,23 @@ test "a call completes on an Io that cannot start a concurrent task" {
 
     const catalog = try client.database().list(.{});
     defer catalog.deinit();
+    const result = try client.lookup(ip);
+    defer result.deinit();
+    var batch = try client.lookupBatch(&.{ ip, "1.1.1.1" }, .{ .concurrency = 2 });
+    defer batch.deinit();
+    try std.testing.expect(batch.get("1.1.1.1").? == .ok);
     try std.testing.expectEqual(0, catalog.value.len);
 }
 
 /// Every call, by the path its request goes to. `download_link` stalls the
 /// API's answer to a download rather than object storage's.
 const Call = enum {
+    lookup,
+    lookup_asn,
+    lookup_domain,
+    my_ip,
+    my_entitlement,
+    batch,
     list,
     metadata,
     checksums,
@@ -322,6 +354,12 @@ const Call = enum {
     fn stall(call: Call, harness: *Harness) !void {
         const stub = harness.stub;
         switch (call) {
+            .lookup => try stub.route("/" ++ ip, stalledBody(try support.lookupBody(stub.arena.allocator(), ip, ""))),
+            .lookup_asn => try stub.route("/asn/9009", stalledBody("{\"asn\":9009}")),
+            .lookup_domain => try stub.route("/domain/example.com", stalledBody("{\"domain\":\"example.com\"}")),
+            .my_ip => try stub.route("/myip", stalledBody(try support.lookupBody(stub.arena.allocator(), ip, ""))),
+            .my_entitlement => try stub.route("/api/v1/entitlement", stalledBody("{\"org_id\":\"x\"}")),
+            .batch => try stub.route("/batch", stalledBody("")),
             .list => try stub.route(list_path, stalledBody(list_body)),
             .metadata => try stub.route("/api/v2/database/metadata", stalledBody("{\"id\":\"x\"}")),
             .checksums => try stub.route("/api/v2/database/checksum", stalledBody("{\"id\":\"x\"}")),
@@ -347,6 +385,22 @@ const Call = enum {
         const database = client.database();
         const oauth: internetdata.OauthOptions = .{ .timeout = options.timeout, .diagnostics = options.diagnostics };
         switch (call) {
+            .lookup => (try client.lookupWith(ip, options)).deinit(),
+            .lookup_asn => (try client.lookupAsnWith(9009, options)).deinit(),
+            .lookup_domain => (try client.lookupDomainWith("example.com", options)).deinit(),
+            .my_ip => (try client.myIpWith(options)).deinit(),
+            .my_entitlement => (try client.myEntitlementWith(options)).deinit(),
+            .batch => {
+                var batch = try client.lookupBatch(&.{ip}, .{ .timeout = options.timeout });
+                defer batch.deinit();
+                switch (batch.get(ip).?) {
+                    .ok => {},
+                    .failed => |failure| {
+                        options.diagnostics.?.* = failure.diagnostics;
+                        return failure.err;
+                    },
+                }
+            },
             .list => (try database.list(options)).deinit(),
             .metadata => (try database.metadata("x", options)).deinit(),
             .checksums => (try database.checksums("x", .mmdb, options)).deinit(),

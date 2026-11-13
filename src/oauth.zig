@@ -310,7 +310,7 @@ pub const OauthApi = struct {
         const gpa = self.client.gpa;
         var url: std.ArrayList(u8) = .empty;
         errdefer url.deinit(gpa);
-        try url.appendSlice(gpa, self.client.transport.base_url);
+        try url.appendSlice(gpa, self.client.transport.oauth_base_url);
         try url.appendSlice(gpa, "/oauth/authorize");
         for (params[0..count], 0..) |param, i| {
             try url.append(gpa, if (i == 0) '?' else '&');

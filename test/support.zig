@@ -1,12 +1,14 @@
 //! A stub origin that answers from a table and records what it was asked for, so
-//! "the key never went to object storage" and "a 403 is asked for exactly once"
-//! are asserted rather than assumed.
+//! "never touched the network", "kept at most N in flight", "the key never went
+//! to object storage" and "a 403 is asked for exactly once" are asserted rather
+//! than assumed.
 //!
-//! Hand-rolled on `std.Io.net` rather than on `std.http.Server` because two of
+//! Hand-rolled on `std.Io.net` rather than on `std.http.Server` because three of
 //! the things that have to be proved here are outside what a conforming server
-//! offers: an origin that PROMISES a multi-gigabyte body so a followed redirect
-//! is caught by the request count rather than by the transfer, and one that
-//! declares a content encoding it was never offered.
+//! offers: the PEAK number of concurrent connections, an origin that PROMISES a
+//! multi-gigabyte body so a followed redirect is caught by the request count
+//! rather than by the transfer, and one that declares a content encoding it was
+//! never offered.
 
 const std = @import("std");
 
@@ -35,6 +37,9 @@ pub const Route = struct {
     /// Writes each byte of the body after the stall on its own, this far apart,
     /// so no one read waits long however long the whole body takes.
     trickle: Io.Duration = .zero,
+    /// On `/batch`, sent as it is rather than shaping only the pace of the
+    /// answer the stub builds, so a test can serve a chunk no client can read.
+    verbatim: bool = false,
 
     pub const Header = struct { name: []const u8, value: []const u8 };
 
@@ -88,6 +93,10 @@ pub const Stub = struct {
     user_agent: []const u8 = "",
     /// Slow answers the client stopped reading, seen as a write that failed.
     hangups: usize = 0,
+    in_flight: usize = 0,
+    peak_in_flight: usize = 0,
+    /// How long every answer is held before it is written.
+    delay: Io.Duration = .zero,
     closing: Io.Event = .unset,
 
     /// Binds an ephemeral port on the loopback and starts serving.
@@ -146,6 +155,12 @@ pub const Stub = struct {
         gop.value_ptr.* = .{ .routes = values };
     }
 
+    /// A successful Unlimited lookup for one address, which is what most cases
+    /// want the stub to answer.
+    pub fn routeLookup(self: *Stub, ip: []const u8) !void {
+        try self.route(try self.printed("/{s}", .{ip}), .ok(try lookupBody(self.arena.allocator(), ip, "")));
+    }
+
     pub fn own(self: *Stub, text: []const u8) ![]const u8 {
         return self.arena.allocator().dupe(u8, text);
     }
@@ -200,6 +215,12 @@ pub const Stub = struct {
         return self.hangups;
     }
 
+    pub fn peak(self: *Stub) usize {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.peak_in_flight;
+    }
+
     /// Waits `duration` on the real clock, or less if the stub is torn down
     /// meanwhile, which is when this answers false.
     fn pause(self: *Stub, duration: Io.Duration) bool {
@@ -244,13 +265,47 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
     defer self.gpa.free(body);
     reader.interface.readSliceAll(body) catch return;
 
-    // An unrouted path gets a 404 with the envelope the API uses, so a test that
-    // forgets a route fails as a client error rather than as a hang.
-    const answer = record(self, target, head, body) orelse Route{
-        .status = 404,
-        .body = "{\"rc\":\"UNKNOWN_DATASET\"}",
-    };
+    var decoded_buffer: [256]u8 = undefined;
+    const path = percentDecode(target, &decoded_buffer);
+
+    const found = record(self, path, head, body);
+    if (self.delay.nanoseconds > 0) {
+        self.io.sleep(self.delay, .awake) catch {};
+    }
+    // Leave the in-flight window BEFORE writing, so what is measured is the
+    // deliberate delay and nothing else. A client stops counting a request the
+    // moment it reads the answer, so decrementing after the write measures a
+    // window wider than the client's own: on a loaded runner the next request
+    // arrives and increments before this thread is scheduled again, and a
+    // correctly-bounded batch reads as one OVER its limit.
+    release(self);
+
+    // An unrouted path gets a 404 with the envelope the database API uses, so a
+    // test that forgets a route fails as a client error rather than as a hang.
+    const verbatim = if (found) |route| route.verbatim else false;
+    var answer = if (std.mem.eql(u8, path, "/batch") and !verbatim)
+        (if (batchAnswer(self, body)) |text| Route.ok(text) else |_| Route{
+            .status = 500,
+            .body = "{\"error\":\"the stub could not build the batch answer\"}",
+        })
+    else
+        found orelse Route{
+            .status = 404,
+            .body = "{\"rc\":\"UNKNOWN_DATASET\"}",
+        };
+    // A route on /batch shapes only the pace of the answer built above.
+    if (found) |pace| {
+        answer.stall = pace.stall;
+        answer.stall_after = pace.stall_after;
+        answer.trickle = pace.trickle;
+    }
     writeResponse(self, stream, answer) catch {};
+}
+
+fn release(self: *Stub) void {
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
+    self.in_flight -= 1;
 }
 
 fn record(self: *Stub, path: []const u8, head: []const u8, body: []const u8) ?Route {
@@ -262,6 +317,8 @@ fn record(self: *Stub, path: []const u8, head: []const u8, body: []const u8) ?Ro
         std.debug.print("the stub was asked for {d} requests: a loop in the code under test\n", .{request_bound});
         std.process.exit(1);
     }
+    self.in_flight += 1;
+    self.peak_in_flight = @max(self.peak_in_flight, self.in_flight);
     const arena = self.arena.allocator();
     const owned = arena.dupe(u8, path) catch return null;
     const line_end = std.mem.indexOf(u8, head, " ") orelse 0;
@@ -290,6 +347,86 @@ const Sequence = struct {
     routes: []const Route,
     next: usize = 0,
 };
+
+/// A POST /batch is answered the way the API answers one: every address the
+/// table knows is a result if its route is a 200 and an entry error otherwise,
+/// and an unknown address is the 400 the API gives a string that is not one.
+/// One call however many addresses, which is what the request counts measure.
+fn batchAnswer(self: *Stub, body: []const u8) ![]const u8 {
+    var parsed = try std.json.parseFromSlice(struct { ips: []const []const u8 }, self.gpa, body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var results: std.ArrayList(u8) = .empty;
+    defer results.deinit(self.gpa);
+    var failures: std.ArrayList(u8) = .empty;
+    defer failures.deinit(self.gpa);
+    var path_buffer: [256]u8 = undefined;
+
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
+    for (parsed.value.ips) |ip| {
+        const path = std.fmt.bufPrint(&path_buffer, "/{s}", .{ip}) catch continue;
+        const route = self.routes.get(path);
+        if (route != null and route.?.status == 200) {
+            if (results.items.len > 0) {
+                try results.append(self.gpa, ',');
+            }
+            try results.print(self.gpa, "\"{s}\":{s}", .{ ip, route.?.body });
+            continue;
+        }
+        if (failures.items.len > 0) {
+            try failures.append(self.gpa, ',');
+        }
+        if (route) |failed| {
+            const message = try jsonMessage(self.gpa, failed.body);
+            defer self.gpa.free(message);
+            try failures.print(self.gpa, "\"{s}\":{{\"status\":{d},\"error\":{s}}}", .{ ip, failed.status, message });
+        } else {
+            try failures.print(self.gpa, "\"{s}\":{{\"status\":400,\"error\":\"{s}\"}}", .{ ip, not_a_target });
+        }
+    }
+    return try std.fmt.allocPrint(self.arena.allocator(), "{{\"results\":{{{s}}},\"errors\":{{{s}}}}}", .{
+        results.items,
+        failures.items,
+    });
+}
+
+/// What the API answers a target it cannot read as an address, an AS or a
+/// domain.
+pub const not_a_target = "not a valid IP address, AS number or domain";
+
+/// The `error` member of a route's JSON body, as a JSON string literal.
+fn jsonMessage(gpa: Allocator, body: []const u8) ![]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch {
+        return try std.json.Stringify.valueAlloc(gpa, "request failed", .{});
+    };
+    defer parsed.deinit();
+    var message: []const u8 = "request failed";
+    if (parsed.value == .object) {
+        if (parsed.value.object.get("error")) |found| {
+            if (found == .string) {
+                message = found.string;
+            }
+        }
+    }
+    return try std.json.Stringify.valueAlloc(gpa, message, .{});
+}
+
+/// An Unlimited answer for `ip`: the members every plan answers, with no
+/// country and no announcement, and `extra` members after them.
+pub fn lookupBody(arena: Allocator, ip: []const u8, extra: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena,
+        \\{{"ip":"{s}","is_bogon":false,"is_tor":false,"is_relay":false,"is_anycast":false,
+        \\"is_carrier":false,"is_satellite":false,"is_ssh":false,"is_smtp":false,"is_web":false,
+        \\"is_dns_resolver":false,"is_bittorrent":false,"tor":{{}},"relay":{{}},
+        \\"location":{{"continent":"","continent_name":"","country":"","country_name":"","timezone":"",
+        \\"currency_code":"","currency_name":"","currency_symbol":"","flag_emoji":"","flag_unicode":""}},
+        \\"asn":{{"asn":0,"name":"","domain":"","type":"","prefix":""}},"company":{{"name":"","domain":""}},
+        \\"hostname":"","abuse":{{"email":""}}{s}{s}}}
+    , .{ ip, if (extra.len > 0) "," else "", extra });
+}
 
 fn ownedHeader(self: *Stub, head: []const u8, name: []const u8) []const u8 {
     const value = headerValue(head, name) orelse return "";
@@ -324,6 +461,23 @@ fn rawTarget(head: []const u8) ?[]const u8 {
     var parts = std.mem.tokenizeScalar(u8, head[0..line_end], ' ');
     _ = parts.next() orelse return null;
     return parts.next();
+}
+
+fn percentDecode(text: []const u8, out: []u8) []const u8 {
+    var len: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and len < out.len) : (len += 1) {
+        if (text[i] == '%' and i + 2 < text.len) {
+            if (std.fmt.parseInt(u8, text[i + 1 ..][0..2], 16)) |byte| {
+                out[len] = byte;
+                i += 3;
+                continue;
+            } else |_| {}
+        }
+        out[len] = text[i];
+        i += 1;
+    }
+    return out[0..len];
 }
 
 fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {
@@ -403,7 +557,9 @@ pub const Harness = struct {
 
     /// The thread budget is set here rather than left to the CPU count: the stub
     /// serves from a task of its own, so a one-core runner with no async budget
-    /// would deadlock the first request.
+    /// would deadlock the first request, and the peak-in-flight measurements
+    /// need requests to genuinely overlap where a two-core runner would
+    /// serialize them.
     pub fn start(gpa: Allocator) !*Harness {
         const self = try gpa.create(Harness);
         errdefer gpa.destroy(self);

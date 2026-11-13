@@ -11,6 +11,7 @@
 const std = @import("std");
 
 const database = @import("database.zig");
+const entitlement = @import("entitlement.zig");
 
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -48,6 +49,9 @@ const rules = [_]Entry{
     .{ .T = database.DatabaseMetadata, .name = "updated", .form = .date },
     .{ .T = database.DatabaseMetadata, .name = "sample", .form = .objects },
     .{ .T = database.DownloadAttempt, .name = "created", .form = .date_time },
+    .{ .T = entitlement.EntitlementApikey, .name = "expires", .form = .date_time },
+    .{ .T = entitlement.EntitlementUsage, .name = "window_start", .form = .date_time },
+    .{ .T = entitlement.EntitlementUsage, .name = "window_end", .form = .date_time },
 };
 
 comptime {

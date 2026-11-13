@@ -1,38 +1,89 @@
 //! The official Zig client library for the [InternetData](https://internetdata.io)
-//! API: licensed IP and network databases, downloaded as CSV.GZ or MMDB.
+//! API: what every InternetData database says about an IP address, an AS or a
+//! domain, and the licensed databases themselves, downloaded as CSV.GZ or MMDB.
 //!
-//! Start with `Client.init`, then `Client.database()`. Every database endpoint
-//! published today needs an API key carrying the `db.download` scope, but
-//! `Options.api_key` is optional: a client built without one sends no
-//! `Authorization` header rather than refusing to build. `Client.oauth()` signs a
-//! person in with the device flow, and never needs a key.
+//! Start with `Client.init` and `Client.lookup`. No API key is needed: without
+//! one a lookup is on Unlimited, the free plan, limited per address per minute.
+//! A batch needs a paid plan, and `Client.database()` a key carrying the
+//! `db.download` scope. `Client.oauth()` signs a person in, and never needs a
+//! key.
 //!
 //! ```
 //! var threaded: std.Io.Threaded = .init(gpa, .{});
 //! defer threaded.deinit();
 //!
-//! var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
+//! var client = try internetdata.Client.init(gpa, threaded.io(), .{});
 //! defer client.deinit();
 //!
-//! const catalog = try client.database().list(.{});
-//! defer catalog.deinit();
-//! std.debug.print("{s}\n", .{catalog.value[0].versions[0].id});
+//! const result = try client.lookup("146.70.116.130");
+//! defer result.deinit();
+//! std.debug.print("{s}\n", .{result.value.asn.name});
 //! ```
+//!
+//! # Absent is not false
+//!
+//! Every member the spec does not require is optional, because your key decides
+//! which of them the API sends. `null` means "not in your plan", which is a
+//! different answer from `false`. Read the optional itself wherever that
+//! matters, or `orelse false` when all you want to know is whether an address
+//! is flagged.
 //!
 //! # Memory
 //!
 //! Everything the client returns is allocated with the allocator you gave
-//! `Client.init` and is owned by you: a `std.json.Parsed` from the catalog calls
-//! carries its arena, and `downloadUrl` and `downloadBytes` return slices. The
-//! library allocates nothing you cannot free, and its test suite runs under
+//! `Client.init` and is owned by you: a `Lookup` and a `Batch` carry a `deinit`,
+//! a `std.json.Parsed` from the catalog calls carries its arena, and
+//! `downloadUrl` and `downloadBytes` return slices to free. The library
+//! allocates nothing you cannot free, and its test suite runs under
 //! `std.testing.allocator`.
 
 const std = @import("std");
 
+pub const Entitlement = @import("entitlement.zig").Entitlement;
+pub const EntitlementApikey = @import("entitlement.zig").EntitlementApikey;
+pub const EntitlementPlan = @import("entitlement.zig").EntitlementPlan;
+pub const EntitlementUsage = @import("entitlement.zig").EntitlementUsage;
+pub const Batch = @import("client.zig").Batch;
+pub const BatchOptions = @import("client.zig").BatchOptions;
+pub const CacheOptions = @import("client.zig").CacheOptions;
 pub const CallOptions = @import("client.zig").CallOptions;
 pub const Client = @import("client.zig").Client;
 pub const Options = @import("client.zig").Options;
 pub const default_base_url = @import("client.zig").default_base_url;
+
+pub const AbuseContact = @import("lookup.zig").AbuseContact;
+pub const Answer = @import("lookup.zig").Answer;
+pub const Asn = @import("lookup.zig").Asn;
+pub const AsnAnswer = @import("lookup.zig").AsnAnswer;
+pub const AsnLookup = @import("lookup.zig").AsnLookup;
+pub const AsnPrefix = @import("lookup.zig").AsnPrefix;
+pub const BitTorrentDetail = @import("lookup.zig").BitTorrentDetail;
+pub const CarrierDetail = @import("lookup.zig").CarrierDetail;
+pub const ClassDetail = @import("lookup.zig").ClassDetail;
+pub const Company = @import("lookup.zig").Company;
+pub const DisposableDetail = @import("lookup.zig").DisposableDetail;
+pub const DnsAddressRecord = @import("lookup.zig").DnsAddressRecord;
+pub const DnsCnameRecord = @import("lookup.zig").DnsCnameRecord;
+pub const DnsMxRecord = @import("lookup.zig").DnsMxRecord;
+pub const DnsNsRecord = @import("lookup.zig").DnsNsRecord;
+pub const DnsResolverDetail = @import("lookup.zig").DnsResolverDetail;
+pub const DomainAnswer = @import("lookup.zig").DomainAnswer;
+pub const DomainDns = @import("lookup.zig").DomainDns;
+pub const DomainIpRange = @import("lookup.zig").DomainIpRange;
+pub const DomainIpRanges = @import("lookup.zig").DomainIpRanges;
+pub const DomainLookup = @import("lookup.zig").DomainLookup;
+pub const HostedDomains = @import("lookup.zig").HostedDomains;
+pub const Location = @import("lookup.zig").Location;
+pub const Lookup = @import("lookup.zig").Lookup;
+pub const ProxyDetail = @import("lookup.zig").ProxyDetail;
+pub const PubproxyDetail = @import("lookup.zig").PubproxyDetail;
+pub const Rwhois = @import("lookup.zig").Rwhois;
+pub const SatelliteDetail = @import("lookup.zig").SatelliteDetail;
+pub const Served = @import("lookup.zig").Served;
+pub const SmtpDetail = @import("lookup.zig").SmtpDetail;
+pub const SshDetail = @import("lookup.zig").SshDetail;
+pub const WebDetail = @import("lookup.zig").WebDetail;
+pub const Whois = @import("lookup.zig").Whois;
 
 pub const Checksums = @import("database.zig").Checksums;
 pub const DatabaseApi = @import("database.zig").DatabaseApi;
@@ -63,11 +114,16 @@ pub const kindName = @import("errors.zig").kindName;
 pub const OauthCallError = @import("errors.zig").OauthCallError;
 pub const OauthError = @import("errors.zig").OauthError;
 
+pub const isBogon = @import("bogon.zig").isBogon;
+
 test {
+    _ = @import("bogon.zig");
+    _ = @import("cache.zig");
     _ = @import("client.zig");
     _ = @import("database.zig");
     _ = @import("errors.zig");
     _ = @import("http.zig");
+    _ = @import("lookup.zig");
     _ = @import("oauth.zig");
     _ = @import("strict.zig");
 }

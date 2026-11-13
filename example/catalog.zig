@@ -1,4 +1,4 @@
-//! The library's smallest useful program, and the one the README opens with.
+//! The catalog your key can see, which the README's database section opens with.
 //!
 //!     zig build example
 //!     ./zig-out/bin/catalog <api-key>

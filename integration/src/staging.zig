@@ -1,5 +1,5 @@
-//! The staging fixtures the suite shares: a client pointed through the recording
-//! proxy, and the rules that hold whatever this key happens to be licensed for.
+//! The fixtures the suite shares: a client pointed through the recording proxy,
+//! and the rules that hold whatever this key happens to be licensed for.
 
 const std = @import("std");
 const internetdata = @import("internetdata");
@@ -10,8 +10,18 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 /// Not the library's default, which is production. Reaching it through the
-/// client's own base-URL option is what makes that option worth testing.
-pub const upstream = "https://staging.internetdata.io";
+/// client's own base-URL option is what makes that option worth testing. The
+/// database calls answer here as the lookups do.
+pub const upstream = "https://api-staging.internetdata.io";
+
+/// Where the client sends staging's OAuth requests: the apex of `upstream`.
+pub const apex = "https://staging.internetdata.io";
+
+/// The library's default, which the keyless lookups are asked on as well.
+pub const production = "https://api.internetdata.io";
+
+/// A VPN address on a hosting network, the one the README teaches.
+pub const probe = "146.70.116.130";
 
 /// The one credential this suite has. It belongs to an organization licensed for
 /// the two smallest published databases, so every artifact it may download moves
@@ -47,10 +57,16 @@ pub const Rung = struct {
     client: internetdata.Client,
     url_buffer: [64]u8 = undefined,
 
+    /// Staging, on the suite's key.
+    pub fn start(gpa: Allocator) !*Rung {
+        return on(gpa, upstream, key(), .{});
+    }
+
     /// The thread budget is pinned rather than left to the CPU count: the proxy
     /// forwards from inside a task of its own, so a one-core runner with no
-    /// async budget would deadlock the first request.
-    pub fn start(gpa: Allocator) !*Rung {
+    /// async budget would deadlock the first request. An empty `api_key` is a
+    /// keyless client.
+    pub fn on(gpa: Allocator, origin: []const u8, api_key: []const u8, options: internetdata.Options) !*Rung {
         const self = try gpa.create(Rung);
         errdefer gpa.destroy(self);
         self.* = .{
@@ -60,13 +76,13 @@ pub const Rung = struct {
             .client = undefined,
         };
         const io = self.threaded.io();
-        self.proxy = try proxy.Proxy.start(gpa, io, upstream, key());
+        self.proxy = try proxy.Proxy.start(gpa, io, origin, api_key);
         errdefer self.proxy.deinit();
 
-        self.client = try internetdata.Client.init(gpa, io, .{
-            .api_key = key(),
-            .base_url = self.proxy.baseUrl(&self.url_buffer),
-        });
+        var pointed = options;
+        pointed.api_key = api_key;
+        pointed.base_url = self.proxy.baseUrl(&self.url_buffer);
+        self.client = try internetdata.Client.init(gpa, io, pointed);
         return self;
     }
 

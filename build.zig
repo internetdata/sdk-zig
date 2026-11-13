@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
     const suites = [_][]const u8{
         "test/conformance.zig",
         "test/client.zig",
+        "test/sharing.zig",
         "test/oauth.zig",
         "test/timeout.zig",
         "test/readme.zig",
@@ -30,18 +31,20 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(suite(b, internetdata, target, optimize, path)).step);
     }
 
-    const example = b.addExecutable(.{
-        .name = "catalog",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("example/catalog.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "internetdata", .module = internetdata }},
-        }),
-    });
-    // Built by CI so the program the README opens with cannot go stale.
-    const example_step = b.step("example", "Build the example program into zig-out/bin");
-    example_step.dependOn(&b.addInstallArtifact(example, .{}).step);
+    // Built by CI so the programs the README points at cannot go stale.
+    const example_step = b.step("example", "Build the example programs into zig-out/bin");
+    for ([_][]const u8{ "lookup", "catalog" }) |name| {
+        const example = b.addExecutable(.{
+            .name = name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("example/{s}.zig", .{name})),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "internetdata", .module = internetdata }},
+            }),
+        });
+        example_step.dependOn(&b.addInstallArtifact(example, .{}).step);
+    }
 
     // Kept out of `test` so a plain build stays offline and needs no credential.
     const live_step = b.step("live", "Query the real API (needs network and an API key)");

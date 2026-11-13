@@ -23,7 +23,8 @@ test "staging publishes its authorization server metadata" {
     const metadata = try keyless.client.oauth().metadata(.{});
     defer metadata.deinit();
 
-    try std.testing.expectEqualStrings(staging.upstream, metadata.value.issuer);
+    // Asked of the API host, answered by its apex.
+    try std.testing.expectEqualStrings(staging.apex, metadata.value.issuer);
     try std.testing.expect(metadata.value.device_authorization_endpoint != null);
     const methods = metadata.value.code_challenge_methods_supported orelse &.{};
     for (methods) |method| {

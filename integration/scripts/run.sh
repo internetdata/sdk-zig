@@ -29,10 +29,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO_URL="https://github.com/internetdata/sdk-zig"
-# The major this suite is written against, from the release its oldest check
-# needs (src/oauth.zig, 2.3.0). Read by hand rather than parsed out of a
+# The major this suite is written against, from the release its newest check
+# needs (src/lookup.zig, 2.11.0). Read by hand rather than parsed out of a
 # manifest: the gate has to run before anything is fetched or built.
-RANGE_LOW="2.3.0"
+RANGE_LOW="2.11.0"
 RANGE_HIGH="3.0.0"
 
 LOCAL_PATH="${SDK_LOCAL_PATH:-}"

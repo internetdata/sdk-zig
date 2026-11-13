@@ -87,11 +87,11 @@ pub fn classify(status: u16, retry_after_present: bool) Error {
     if (status == 403) {
         return error.Forbidden;
     }
-    // Any other 4xx is a CLIENT error, and 404 is the one this API actually
-    // serves: an ID it does not publish, or one whose build has not landed.
-    // Falling through to the server_error default would make it retryable, so a
-    // misspelled ID would be asked for three times before failing. Classify on
-    // the RANGE, not on an enumerated list.
+    // Any other 4xx is a CLIENT error: a database ID this API does not publish,
+    // a target it cannot read, a batch on a plan without one. Falling through to
+    // the server_error default would make it retryable, so a misspelled ID would
+    // be asked for three times before failing. Classify on the RANGE, not on an
+    // enumerated list.
     if (status >= 400 and status < 500) {
         return error.BadRequest;
     }
@@ -116,14 +116,14 @@ pub const Diagnostics = struct {
     error_description_buf: [max_message_len]u8 = undefined,
     error_description_len: ?usize = null,
 
-    /// Long enough for every result code the API sends, and short enough that
-    /// one can sit in a caller's frame. A longer message is truncated rather
-    /// than allocated.
+    /// Long enough for every message the API sends, and short enough that a
+    /// batch of a hundred thousand addresses can afford one per entry. A longer
+    /// message is truncated rather than allocated.
     pub const max_message_len = 128;
     /// Longer than every code RFC 6749 and RFC 8628 define.
     pub const max_error_code_len = 48;
 
-    /// The API's own result code, or the transport failure's name. Empty when
+    /// The API's own explanation, or the transport failure's name. Empty when
     /// the call succeeded or the failure carried no text.
     pub fn message(d: *const Diagnostics) []const u8 {
         return d.message_buf[0..d.message_len];
@@ -207,21 +207,24 @@ pub fn oauthErrorFor(code: []const u8) OauthError {
     return error.OauthRejected;
 }
 
-/// Every refusal carries `{"rc": "<CODE>"}`, which is more use to a caller than
-/// the status alone: `NOT_LICENSED` and `LICENSE_EXPIRED` are both 403 and mean
-/// different things to do next. The codes are deliberately not an enum on the
-/// wire, so one added later stays readable to a client built today.
+/// The two APIs behind this host answer with different envelopes: the lookup
+/// endpoints use `error`, the database endpoints use `rc`. Both are read here so
+/// a caller never has to know which one they hit. A database refusal's code is
+/// more use than its status alone: `NOT_LICENSED` and `LICENSE_EXPIRED` are both
+/// 403 and mean different things to do next.
 pub fn envelopeMessage(gpa: std.mem.Allocator, body: []const u8) ?[]const u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     defer parsed.deinit();
     if (parsed.value != .object) {
         return null;
     }
-    const found = parsed.value.object.get("rc") orelse return null;
-    if (found != .string or found.string.len == 0) {
-        return null;
+    for ([_][]const u8{ "error", "rc" }) |key| {
+        const found = parsed.value.object.get(key) orelse continue;
+        if (found == .string and found.string.len > 0) {
+            return gpa.dupe(u8, found.string) catch null;
+        }
     }
-    return gpa.dupe(u8, found.string) catch null;
+    return null;
 }
 
 test "a 4xx that is not enumerated is still a client error" {
@@ -238,8 +241,12 @@ test "a 429 is classified by Retry-After, not by its status" {
     try std.testing.expect(!isRetryable(error.QuotaExceeded));
 }
 
-test "the rc envelope is read" {
+test "both error envelopes are read" {
     const gpa = std.testing.allocator;
+    const from_lookup = envelopeMessage(gpa, "{\"error\":\"not a valid IP address\"}").?;
+    defer gpa.free(from_lookup);
+    try std.testing.expectEqualStrings("not a valid IP address", from_lookup);
+
     const code = envelopeMessage(gpa, "{\"rc\":\"NOT_LICENSED\"}").?;
     defer gpa.free(code);
     try std.testing.expectEqualStrings("NOT_LICENSED", code);

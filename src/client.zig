@@ -1,35 +1,63 @@
 const std = @import("std");
 
+const entitlement_mod = @import("entitlement.zig");
+const bogon = @import("bogon.zig");
+const cache_mod = @import("cache.zig");
 const database_mod = @import("database.zig");
 const errors = @import("errors.zig");
 const http = @import("http.zig");
+const lookup_mod = @import("lookup.zig");
 const oauth_mod = @import("oauth.zig");
 
 const Allocator = std.mem.Allocator;
+const CallError = errors.CallError;
 const Diagnostics = errors.Diagnostics;
 const Io = std.Io;
+const Entitlement = entitlement_mod.Entitlement;
+const AsnLookup = lookup_mod.AsnLookup;
+const DomainLookup = lookup_mod.DomainLookup;
+const Lookup = lookup_mod.Lookup;
+const Parsed = std.json.Parsed;
 
-/// The production API. Override it with `Options.base_url`.
-pub const default_base_url = "https://internetdata.io";
+/// The production API. Override it with `Options.base_url`. The database calls
+/// answer here too; `oauth()` goes to the apex, `https://internetdata.io`.
+pub const default_base_url = "https://api.internetdata.io";
+
+/// The most addresses `POST /batch` takes in one call; a larger batch is sent
+/// in chunks of this size.
+const batch_max: usize = 1000;
+
+pub const CacheOptions = struct {
+    /// Maximum number of addresses held.
+    max_entries: usize = 10_000,
+    /// How long an answer stays fresh.
+    ttl: Io.Duration = .fromSeconds(60 * 60),
+};
 
 pub const Options = struct {
-    /// A key from the console carrying the `db.download` scope. Optional: a
-    /// client built without one sends no `Authorization` header at all, rather
-    /// than refusing to build. Every database endpoint published today is
-    /// licensed and answers 401 without a key, but that is what the API serves
-    /// rather than a property of its shape, and a client that cannot be built
-    /// keyless would have to change its own signature the day a dataset is served
-    /// free. `oauth()` never sends one.
+    /// Without one a lookup is on Unlimited, the free plan, limited per address
+    /// per minute: the flags and detail every plan answers, `location`, `asn`,
+    /// `company` and `abuse`. A batch needs a key on a paid plan, and the
+    /// database calls one carrying the `db.download` scope; a client built
+    /// without one sends no `Authorization` header at all, rather than refusing
+    /// to build. `oauth()` never sends one.
     api_key: ?[]const u8 = null,
+    /// Without a trailing slash, or with any number of them. `oauth()` goes to
+    /// its host's apex: `api.` dropped, `api-<env>.` becoming `<env>.`, and any
+    /// other base URL used as given.
     base_url: []const u8 = default_base_url,
+    /// Null disables caching, so every lookup of a non-bogon address is served.
+    cache: ?CacheOptions = .{},
+    /// Concurrent batch requests - chunks of up to 1000 addresses - during a batch.
+    concurrency: usize = 8,
     /// Further attempts a transient failure gets.
     retries: u32 = 2,
-    /// How long one attempt of any call may take, from connecting to the last
-    /// byte of the answer; a timeout is `error.Network`, so it is retried, and
-    /// each retry gets the whole bound again. A database transfer is bounded
-    /// only until its response head, so a download is never cut off. Must be
-    /// positive and at most `std.math.maxInt(i64)` nanoseconds, about 292 years,
-    /// which `init` asserts.
+    /// How long one attempt may take, from connecting to the last byte of the
+    /// answer; a timeout is `error.Network`, so it is retried, and each retry
+    /// gets the whole bound again. A database transfer is bounded only until its
+    /// response head, so a download is never cut off. Must be positive and at
+    /// most `std.math.maxInt(i64)` nanoseconds, about 292 years, which `init`
+    /// asserts.
     timeout: Io.Duration = .fromSeconds(30),
 };
 
@@ -39,11 +67,12 @@ pub const CallOptions = struct {
     retries: ?u32 = null,
     /// This call's own `Options.timeout`, longer or shorter. One that is not
     /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
-    /// the call with `error.BadRequest` before anything is sent.
+    /// the call with `error.BadRequest` before anything is sent or answered, a
+    /// bogon and a cached answer included.
     timeout: ?Io.Duration = null,
-    /// Filled in with the status, the wait and the API's own result code when
-    /// the call fails. A Zig error carries no payload, so this is how the detail
-    /// behind one is reached.
+    /// Filled in with the status, the wait and the API's own explanation, or a
+    /// database refusal's result code, when the call fails. A Zig error carries
+    /// no payload, so this is how the detail behind one is reached.
     diagnostics: ?*Diagnostics = null,
     /// One build of the database, as a `database.updated` webhook names it
     /// (`20261105.0t53s5`), so the file is the one whose `sha256` the webhook
@@ -54,38 +83,62 @@ pub const CallOptions = struct {
     build: ?[]const u8 = null,
 };
 
-/// A client for the InternetData API: licensed IP and network databases,
-/// downloaded as CSV.GZ or MMDB.
+/// Per-call overrides for one batch.
 ///
-/// Everything it returns is allocated with the allocator passed to `init` and is
-/// owned by the caller: the catalog calls return a `std.json.Parsed` that owns
-/// its arena, and `downloadUrl` and `downloadBytes` return slices to free.
+/// `concurrency` lives here and not on `CallOptions`, so passing it to a
+/// single lookup does not compile rather than being accepted and ignored.
+pub const BatchOptions = struct {
+    retries: ?u32 = null,
+    /// Bounds each chunk's attempt, as `Options.timeout` does. One that is not
+    /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
+    /// every address with `error.BadRequest` before anything is sent or
+    /// answered, bogons and cached answers included.
+    timeout: ?Io.Duration = null,
+    /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
+    /// batch only, so one large batch does not need a second client to widen it.
+    /// Zero refuses the whole batch: every address fails with
+    /// `error.BadRequest` before any request is sent.
+    concurrency: ?usize = null,
+};
+
+/// A client for the InternetData API: lookups of an address, an AS or a domain,
+/// and the licensed databases, downloaded as CSV.GZ or MMDB.
+///
+/// Everything it returns is allocated with the allocator passed to `init` and
+/// is owned by the caller: a `Lookup` and a `Batch` each carry a `deinit`, the
+/// catalog calls return a `std.json.Parsed` that owns its arena, and
+/// `downloadUrl` and `downloadBytes` return slices to free.
 ///
 /// Safe to share between concurrent tasks. Do NOT copy it after `init`: like
 /// `std.http.Client`, it holds intrusive lists that point at themselves.
 ///
-/// **Nothing it answers is cached.** What your organization may see depends on
-/// the key, so a listing held from one client is not an answer for another, and
-/// the catalog is small enough that re-reading it costs less than being wrong
-/// about whose it was.
+/// The cache holds address lookups alone, and is per instance and never
+/// global: two clients holding different API keys are on different plans and
+/// entitled to different fields, so a shared cache would serve one of them the
+/// other's shape. Nothing else is cached: an AS or a domain is asked each time,
+/// and what an organization may download depends on the key, so a listing held
+/// from one client is not an answer for another.
 pub const Client = struct {
     gpa: Allocator,
     io: Io,
     transport: http.Transport,
+    cache: ?cache_mod.Cache,
+    concurrency: usize,
     retries: u32,
     timeout: Io.Duration,
 
     pub const InitError = Allocator.Error || error{InvalidBaseUrl};
 
     /// `io` is the same `std.Io` implementation the rest of your program uses;
-    /// `std.Io.Threaded` is the usual one.
+    /// `std.Io.Threaded` is the usual one, and a batch is only as concurrent as
+    /// the implementation you pass here allows.
+    ///
+    /// `gpa` must be thread-safe if `lookupBatch` is ever called on an `io` that
+    /// runs tasks in parallel, since the workers allocate their own answers.
+    /// The general purpose allocators in `std.heap` are.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
+        std.debug.assert(options.concurrency > 0);
         std.debug.assert(http.validTimeout(options.timeout));
-
-        // Empty counts as absent, so a `${{ secrets.MISSING }}` that interpolated
-        // to nothing presents no credential rather than a bearer token of one
-        // space. Whether the key reached the wire is asserted in the suites.
-        const api_key = std.mem.trim(u8, options.api_key orelse "", " \t\r\n");
 
         const base_url = std.mem.trimEnd(u8, options.base_url, "/");
         const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
@@ -95,15 +148,28 @@ pub const Client = struct {
 
         const owned_base_url = try gpa.dupe(u8, base_url);
         errdefer gpa.free(owned_base_url);
+        const oauth_base_url = try http.oauthBaseUrl(gpa, base_url);
+        errdefer gpa.free(oauth_base_url);
 
-        // Bearer only. A v1 `?apikey=` credential is a different vocabulary the
-        // v2 endpoints do not accept, and a key belongs in a header rather than
-        // in a query string a proxy will log.
-        const authorization: ?[]const u8 = if (api_key.len == 0)
-            null
-        else
-            try std.fmt.allocPrint(gpa, "Bearer {s}", .{api_key});
+        // Bearer only. The API also accepts X-Api-Key and ?apikey=; a key
+        // belongs in one header, not in a query string a proxy will log.
+        // The blanks around a key, a file's newline among them, are no part of
+        // it, and a key of blanks alone is no key. That is what an unset
+        // environment variable or CI secret interpolates to, and `Bearer ` with
+        // nothing behind it is never what anyone meant - the API would reject
+        // it, but as an unauthorized request rather than as the anonymous one
+        // intended. A control character left inside is refused by every call
+        // that would send it.
+        const key = std.mem.trim(u8, options.api_key orelse "", " \t\r\n");
+        const authorization = if (key.len == 0) null else try std.fmt.allocPrint(gpa, "Bearer {s}", .{key});
         errdefer if (authorization) |value| gpa.free(value);
+
+        var cache: ?cache_mod.Cache = null;
+        if (options.cache) |settings| {
+            std.debug.assert(settings.max_entries > 0);
+            std.debug.assert(settings.ttl.nanoseconds > 0);
+            cache = .init(gpa, settings.max_entries, settings.ttl);
+        }
 
         return .{
             .gpa = gpa,
@@ -111,8 +177,11 @@ pub const Client = struct {
             .transport = .{
                 .http = .{ .allocator = gpa, .io = io },
                 .base_url = owned_base_url,
+                .oauth_base_url = oauth_base_url,
                 .authorization = authorization,
             },
+            .cache = cache,
+            .concurrency = options.concurrency,
             .retries = options.retries,
             .timeout = options.timeout,
         };
@@ -121,10 +190,599 @@ pub const Client = struct {
     pub fn deinit(self: *Client) void {
         self.transport.deinit();
         self.gpa.free(self.transport.base_url);
+        self.gpa.free(self.transport.oauth_base_url);
         if (self.transport.authorization) |value| {
             self.gpa.free(value);
         }
+        if (self.cache) |*cache| {
+            cache.deinit();
+        }
         self.* = undefined;
+    }
+
+    /// Whether an address is answered locally rather than served. Exposed here
+    /// so the check is reachable from the client you already hold; the free
+    /// `internetdata.isBogon` is the same function.
+    pub fn isBogon(_: *Client, ip: []const u8) bool {
+        return bogon.isBogon(ip);
+    }
+
+    /// What every database says about one address, as much as your plan shows.
+    /// The caller owns the result and must `deinit` it.
+    ///
+    /// A bogon is answered locally and never reaches the network. Everything
+    /// else is served, then cached for this client. A string that is not an IP
+    /// address fails with `error.BadRequest` before anything is sent:
+    /// `lookupAsn` and `lookupDomain` take an AS and a domain.
+    pub fn lookup(self: *Client, ip: []const u8) CallError!Lookup {
+        return self.lookupWith(ip, .{});
+    }
+
+    /// `lookup`, with this call's own retry budget and timeout, and somewhere to
+    /// put the detail behind a failure.
+    pub fn lookupWith(self: *Client, ip: []const u8, options: CallOptions) CallError!Lookup {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        // Checked before a bogon or a cached answer, which need no request:
+        // 4.3.2 answered both with any timeout at all (measured 2026-09-26).
+        const timeout = options.timeout orelse self.timeout;
+        try http.checkTimeout(diag, timeout);
+        // Judged, cached and sent as the IPv4 address it carries, if it is mapped.
+        var buffer: [bogon.max_unmapped_len]u8 = undefined;
+        const carried = bogon.unmapped(ip, &buffer);
+        // The API answers an AS or a domain at this same path, in a shape no
+        // address lookup can read, so anything else is refused before it is sent.
+        if (!bogon.isAddress(carried)) {
+            diag.setMessage("not an IP address: look up an AS with lookupAsn and a domain with lookupDomain");
+            return error.BadRequest;
+        }
+        if (bogon.isBogon(carried)) {
+            return lookup_mod.bogonLookup(self.gpa, carried);
+        }
+        const cache = if (self.cache) |*cache| cache else return self.serve(carried, options, timeout, diag, null);
+        // Callers that miss at the same moment share one request: the first
+        // leads it under its own options, the rest wait for its answer or its
+        // failure. One whose leader was canceled asks again.
+        while (true) {
+            switch (try cache.claim(self.io, carried, self.gpa)) {
+                .hit => |cached| {
+                    defer self.gpa.free(cached);
+                    return self.parse(cached, diag);
+                },
+                .lead => |flight| return self.serve(carried, options, timeout, diag, flight),
+                .wait => |flight| switch (try self.waitFor(cache, flight, diag)) {
+                    .served => |body| {
+                        defer self.gpa.free(body);
+                        return self.parse(body, diag);
+                    },
+                    .failed => |failure| {
+                        diag.* = failure.diagnostics;
+                        return failure.err;
+                    },
+                    .abandoned => continue,
+                },
+            }
+        }
+    }
+
+    /// Asks the API about one address, landing what it gets on the flight it
+    /// leads, if any: an answer is cached, and a failure reaches every waiter.
+    fn serve(
+        self: *Client,
+        carried: []const u8,
+        options: CallOptions,
+        timeout: Io.Duration,
+        diag: *Diagnostics,
+        flight: ?*cache_mod.Cache.Flight,
+    ) CallError!Lookup {
+        var canceled = false;
+        const result = self.ask(carried, options, timeout, diag, &canceled) catch |err| {
+            if (flight) |led| {
+                self.cache.?.land(self.io, carried, led, if (canceled)
+                    .abandoned
+                else
+                    .{ .failed = .{ .err = err, .diagnostics = diag.* } });
+            }
+            return err;
+        };
+        if (flight) |led| {
+            self.cache.?.land(self.io, carried, led, .{ .served = result.raw });
+        }
+        return result;
+    }
+
+    fn ask(
+        self: *Client,
+        carried: []const u8,
+        options: CallOptions,
+        timeout: Io.Duration,
+        diag: *Diagnostics,
+        canceled: *bool,
+    ) CallError!Lookup {
+        var path: std.ArrayList(u8) = .empty;
+        defer path.deinit(self.gpa);
+        try path.append(self.gpa, '/');
+        try http.appendEncoded(self.gpa, &path, carried);
+
+        const attempt: AddressAttempt = .{
+            .client = self,
+            .path = path.items,
+            .timeout = timeout,
+            .diag = diag,
+            .canceled = canceled,
+        };
+        return http.retrying(Lookup, self.io, options.retries orelse self.retries, diag, canceled, attempt, AddressAttempt.run);
+    }
+
+    /// Waits for another caller's request. A waiter canceled meanwhile returns
+    /// at once, as a canceled request does, and leaves the request to its
+    /// leader.
+    fn waitFor(self: *Client, cache: *cache_mod.Cache, flight: *cache_mod.Cache.Flight, diag: *Diagnostics) CallError!cache_mod.Cache.Landing {
+        return cache.wait(self.io, flight, self.gpa) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.Canceled => {
+                self.io.recancel();
+                diag.setMessage("the lookup was canceled");
+                return error.Network;
+            },
+        };
+    }
+
+    /// What every database says about one autonomous system, as much as your
+    /// plan shows. The caller owns the result and must `deinit` it.
+    ///
+    /// The number is sent as given, and an AS no database knows is answered
+    /// with its number and empty values. Never cached, and never batched.
+    pub fn lookupAsn(self: *Client, asn: u32) CallError!AsnLookup {
+        return self.lookupAsnWith(asn, .{});
+    }
+
+    /// `lookupAsn`, with this call's own retry budget and timeout, and
+    /// somewhere to put the detail behind a failure.
+    pub fn lookupAsnWith(self: *Client, asn: u32, options: CallOptions) CallError!AsnLookup {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        var buffer: [16]u8 = undefined;
+        const Attempt = LookupAttempt(lookup_mod.AsnAnswer);
+        const attempt: Attempt = .{
+            .client = self,
+            .path = std.fmt.bufPrint(&buffer, "/asn/{d}", .{asn}) catch unreachable,
+            .timeout = options.timeout orelse self.timeout,
+            .diag = diag,
+        };
+        return http.retrying(AsnLookup, self.io, options.retries orelse self.retries, diag, null, attempt, Attempt.run);
+    }
+
+    /// What every database says about one domain, as much as your plan shows.
+    /// The caller owns the result and must `deinit` it.
+    ///
+    /// The domain is sent as given, percent-encoded into the path. The API
+    /// answers it lowercase and an internationalized name under its punycode
+    /// spelling, and refuses one it cannot read as `error.BadRequest`. Never
+    /// cached, and never batched.
+    pub fn lookupDomain(self: *Client, domain: []const u8) CallError!DomainLookup {
+        return self.lookupDomainWith(domain, .{});
+    }
+
+    /// `lookupDomain`, with this call's own retry budget and timeout, and
+    /// somewhere to put the detail behind a failure.
+    pub fn lookupDomainWith(self: *Client, domain: []const u8, options: CallOptions) CallError!DomainLookup {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        var path: std.ArrayList(u8) = .empty;
+        defer path.deinit(self.gpa);
+        try path.appendSlice(self.gpa, "/domain/");
+        try http.appendEncoded(self.gpa, &path, domain);
+
+        const Attempt = LookupAttempt(lookup_mod.DomainAnswer);
+        const attempt: Attempt = .{
+            .client = self,
+            .path = path.items,
+            .timeout = options.timeout orelse self.timeout,
+            .diag = diag,
+        };
+        return http.retrying(DomainLookup, self.io, options.retries orelse self.retries, diag, null, attempt, Attempt.run);
+    }
+
+    /// Looks up the address this client is calling from. The caller owns the
+    /// result and must `deinit` it.
+    ///
+    /// The same answer `lookup` would give for that address, at the same cost
+    /// against your allowance. The address is the one our edge observed, so a
+    /// call made through a proxy or a VPN reports the exit it left through -
+    /// usually the point of asking.
+    ///
+    /// Deliberately NOT cached. The cache is keyed by address, and which
+    /// address this is IS the question: a machine that moves between networks
+    /// would otherwise be told where it used to be.
+    pub fn myIp(self: *Client) CallError!Lookup {
+        return self.myIpWith(.{});
+    }
+
+    /// `myIp`, with this call's own retry budget and timeout, and somewhere to
+    /// put the detail behind a failure.
+    pub fn myIpWith(self: *Client, options: CallOptions) CallError!Lookup {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        const attempt: AddressAttempt = .{
+            .client = self,
+            .path = "/myip",
+            .timeout = options.timeout orelse self.timeout,
+            .diag = diag,
+        };
+        return http.retrying(Lookup, self.io, options.retries orelse self.retries, diag, null, attempt, AddressAttempt.run);
+    }
+
+    /// What this client's key is entitled to, and how much of it has been used.
+    /// The caller owns the answer and must `deinit` it.
+    ///
+    /// Named for what it answers rather than `me`, which sits one letter from
+    /// `myIp` and means something quite different: one is which address you are
+    /// calling FROM, the other is what the key you are calling WITH may spend.
+    ///
+    /// Unlike a lookup there is no useful unauthenticated answer, so a client
+    /// built without an API key gets `error.Unauthorized` rather than a partial
+    /// one.
+    ///
+    /// Usage counts against the ALLOWANCE WINDOW - on a paid plan the
+    /// anniversary of the subscription, not the calendar month and not the
+    /// billing period, and on the free plan the UTC day - and it is the same
+    /// number a lookup is gated on.
+    ///
+    /// Deliberately NOT cached: the whole point is what has been spent, and a
+    /// cached answer is a wrong one within seconds of the next request.
+    pub fn myEntitlement(self: *Client) CallError!Parsed(Entitlement) {
+        return self.myEntitlementWith(.{});
+    }
+
+    /// `myEntitlement`, with this call's own retry budget and timeout, and
+    /// somewhere to put the detail behind a failure.
+    pub fn myEntitlementWith(self: *Client, options: CallOptions) CallError!Parsed(Entitlement) {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        return http.getParsed(Entitlement, &self.transport, self.gpa, self.io, .{
+            .path = "/api/v1/entitlement",
+            .retries = options.retries orelse self.retries,
+            .timeout = options.timeout orelse self.timeout,
+            .diagnostics = diag,
+        });
+    }
+
+    /// Looks up many addresses in as few requests as possible. The caller owns
+    /// the batch and must `deinit` it.
+    ///
+    /// Bogons are answered locally and cached answers are reused; everything
+    /// else goes to `POST /batch` in chunks of up to 1000 addresses, with at
+    /// most `concurrency` chunks in flight. Keyed by address rather than
+    /// positional, so duplicates in the input collapse to a single entry and the
+    /// caller never has to line two lists up. Keys are in the order the
+    /// addresses were first seen. An address that fails carries its error as its
+    /// value, so one bad entry cannot lose the rest of the answers: the API
+    /// reports a per-entry failure with the status the single lookup would have
+    /// answered, and a chunk that fails as a whole marks every address in it.
+    /// The batch endpoint needs a paid plan: without a key every address in a
+    /// request of two or more fails with `Unauthorized`, and a free-plan
+    /// key's request of two or more with `BadRequest` (HTTP 402). A request
+    /// of one address is answered as its lookup would be.
+    pub fn lookupBatch(
+        self: *Client,
+        ips: []const []const u8,
+        options: BatchOptions,
+    ) Allocator.Error!Batch {
+        var batch: Batch = .{ .gpa = self.gpa };
+        errdefer batch.deinit();
+        // A concurrency of zero, or a timeout no attempt can meet, refuses every
+        // address, a bogon and a cached answer included: 4.3.2 still answered
+        // those two with an impossible timeout (measured 2026-09-26).
+        var refusal: ?Batch.Failure = null;
+        if (options.concurrency) |n| if (n == 0) {
+            var failure: Batch.Failure = .{ .err = error.BadRequest };
+            failure.diagnostics.setMessage("concurrency must be at least 1");
+            refusal = failure;
+        };
+        const timeout = options.timeout orelse self.timeout;
+        if (refusal == null and !http.validTimeout(timeout)) {
+            var failure: Batch.Failure = .{ .err = error.BadRequest };
+            failure.err = http.refuseTimeout(&failure.diagnostics, timeout);
+            refusal = failure;
+        }
+        // An IPv4-mapped address is judged, cached and sent as the address it
+        // carries, once however many of its spellings were asked. `carried[i]`
+        // is that address for entry i, and an entry whose carried address an
+        // earlier one already has is a follower, given its own copy of that
+        // entry's answer once the batch is done.
+        var carried: std.ArrayList([]const u8) = .empty;
+        defer carried.deinit(self.gpa);
+        var owned: std.ArrayList([]const u8) = .empty;
+        defer {
+            for (owned.items) |text| {
+                self.gpa.free(text);
+            }
+            owned.deinit(self.gpa);
+        }
+        var leaders: std.StringHashMapUnmanaged(usize) = .empty;
+        defer leaders.deinit(self.gpa);
+        var followers: std.ArrayList(Follower) = .empty;
+        defer followers.deinit(self.gpa);
+        // The indexes of the entries that go to the API; a bogon or a cached
+        // answer is filled in here and never sent.
+        var pending: std.ArrayList(usize) = .empty;
+        defer pending.deinit(self.gpa);
+        // With a cache, every address is boarded before a chunk is built, so a
+        // lookup arriving meanwhile waits for this batch rather than asking
+        // again. `led[i]` is the flight entry i leads until its chunk lands it;
+        // an address someone else is already asking about waits for them.
+        var led: std.ArrayList(?*Flight) = .empty;
+        defer led.deinit(self.gpa);
+        var waits: std.ArrayList(Wait) = .empty;
+        defer waits.deinit(self.gpa);
+        // Whatever ends the batch early, no one is left waiting on it.
+        errdefer if (self.cache) |*cache| {
+            for (led.items, 0..) |maybe, index| if (maybe) |flight| {
+                cache.land(self.io, carried.items[index], flight, .abandoned);
+            };
+            for (waits.items) |wait| if (wait.flight) |flight| {
+                cache.leave(self.io, flight);
+            };
+        };
+        for (ips) |ip| {
+            if (batch.entries.contains(ip)) {
+                continue;
+            }
+            const key = try self.gpa.dupe(u8, ip);
+            {
+                errdefer self.gpa.free(key);
+                try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
+            }
+            const index = batch.entries.count() - 1;
+            try led.append(self.gpa, null);
+            var buffer: [bogon.max_unmapped_len]u8 = undefined;
+            const text = bogon.unmapped(key, &buffer);
+            const address = if (text.ptr == key.ptr) key else blk: {
+                const copy = try self.gpa.dupe(u8, text);
+                errdefer self.gpa.free(copy);
+                try owned.append(self.gpa, copy);
+                break :blk copy;
+            };
+            try carried.append(self.gpa, address);
+            const leader = try leaders.getOrPut(self.gpa, address);
+            if (leader.found_existing) {
+                try followers.append(self.gpa, .{ .index = index, .leader = leader.value_ptr.* });
+                continue;
+            }
+            leader.value_ptr.* = index;
+            if (refusal) |failure| {
+                batch.entries.values()[index] = .{ .failed = failure };
+                continue;
+            }
+            if (bogon.isBogon(address)) {
+                batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, address) };
+                continue;
+            }
+            try pending.ensureUnusedCapacity(self.gpa, 1);
+            if (self.cache) |*cache| {
+                try waits.ensureUnusedCapacity(self.gpa, 1);
+                switch (try cache.claim(self.io, address, self.gpa)) {
+                    .hit => |cached| {
+                        defer self.gpa.free(cached);
+                        var diag: Diagnostics = .{};
+                        batch.entries.values()[index] = if (self.parse(cached, &diag)) |answer|
+                            .{ .ok = answer }
+                        else |err|
+                            .{ .failed = .{ .err = err, .diagnostics = diag } };
+                        continue;
+                    },
+                    .wait => |flight| {
+                        waits.appendAssumeCapacity(.{ .index = index, .flight = flight });
+                        continue;
+                    },
+                    .lead => |flight| led.items[index] = flight,
+                }
+            }
+            pending.appendAssumeCapacity(index);
+        }
+        if (pending.items.len > 0) {
+            try self.sendChunks(&batch, carried.items, led.items, pending.items, options);
+        }
+        for (waits.items) |*wait| {
+            const flight = wait.flight.?;
+            wait.flight = null;
+            batch.entries.values()[wait.index] = try self.answerWait(flight, carried.items[wait.index], options);
+        }
+        try self.answerFollowers(batch.entries.values(), followers.items);
+        return batch;
+    }
+
+    fn sendChunks(
+        self: *Client,
+        batch: *Batch,
+        keys: []const []const u8,
+        flights: []?*Flight,
+        pending: []const usize,
+        options: BatchOptions,
+    ) Allocator.Error!void {
+        var work: Work = .{
+            .client = self,
+            .keys = keys,
+            .entries = batch.entries.values(),
+            .flights = flights,
+            .pending = pending,
+            .next_chunk = .init(0),
+            .retries = options.retries,
+            .timeout = options.timeout,
+        };
+        const chunk_count = (pending.len + batch_max - 1) / batch_max;
+        const limit = options.concurrency orelse self.concurrency;
+        const workers = @min(limit, chunk_count);
+        const helpers = try self.gpa.alloc(Io.Future(void), workers - 1);
+        defer self.gpa.free(helpers);
+
+        // The caller is the last worker, so the batch still completes on an Io
+        // that cannot give us a second task. Peak in-flight requests is the
+        // number of workers, because each one holds at most one request.
+        var spawned: usize = 0;
+        while (spawned < helpers.len) : (spawned += 1) {
+            helpers[spawned] = self.io.concurrent(runWorker, .{&work}) catch break;
+        }
+        runWorker(&work);
+        for (helpers[0..spawned]) |*helper| {
+            _ = helper.await(self.io);
+        }
+    }
+
+    /// The entry for an address another caller was already asking about: its
+    /// answer, or its failure. One whose leader was canceled is asked again.
+    fn answerWait(self: *Client, flight: *Flight, address: []const u8, options: BatchOptions) Allocator.Error!Batch.Entry {
+        var diag: Diagnostics = .{};
+        const landing = self.waitFor(&self.cache.?, flight, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+        };
+        switch (landing) {
+            .served => |body| {
+                defer self.gpa.free(body);
+                const answer = self.parse(body, &diag) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                };
+                return .{ .ok = answer };
+            },
+            .failed => |failure| return .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } },
+            .abandoned => {
+                const answer = self.lookupWith(address, .{
+                    .retries = options.retries,
+                    .timeout = options.timeout,
+                    .diagnostics = &diag,
+                }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                };
+                return .{ .ok = answer };
+            },
+        }
+    }
+
+    /// Ends the flight an entry leads, if it leads one.
+    fn landEntry(self: *Client, work: *Work, index: usize, outcome: cache_mod.Cache.Outcome) void {
+        const flight = work.flights[index] orelse return;
+        work.flights[index] = null;
+        self.cache.?.land(self.io, work.keys[index], flight, outcome);
+    }
+
+    /// Gives each address asked under a second spelling of a carried address
+    /// the answer the first spelling got. Every entry owns its `Lookup`, so a
+    /// served answer is parsed again from its body and a bogon, which has none,
+    /// is made again.
+    fn answerFollowers(self: *Client, entries: []Batch.Entry, followers: []const Follower) Allocator.Error!void {
+        for (followers) |follower| {
+            entries[follower.index] = switch (entries[follower.leader]) {
+                .failed => |failure| .{ .failed = failure },
+                .ok => |answer| if (answer.raw.len == 0)
+                    .{ .ok = try lookup_mod.bogonLookup(self.gpa, answer.value.ip) }
+                else blk: {
+                    var diag: Diagnostics = .{};
+                    break :blk if (self.parse(answer.raw, &diag)) |copy|
+                        .{ .ok = copy }
+                    else |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => .{ .failed = .{ .err = err, .diagnostics = diag } },
+                    };
+                },
+            };
+        }
+    }
+
+    /// One `POST /batch`, mapped back onto the addresses it was asked about. A
+    /// chunk-level failure - the call refused, the transport failing, the
+    /// retries exhausted - becomes every address's error, exactly as it would
+    /// have been had each been looked up alone.
+    fn lookupChunk(self: *Client, work: *Work, indexes: []const usize) void {
+        var diag: Diagnostics = .{};
+        self.postChunk(work, indexes, &diag) catch |err| {
+            for (indexes) |index| {
+                work.entries[index] = .{ .failed = .{ .err = err, .diagnostics = diag } };
+                self.landEntry(work, index, .{ .failed = .{ .err = err, .diagnostics = diag } });
+            }
+        };
+    }
+
+    fn postChunk(self: *Client, work: *Work, indexes: []const usize, diag: *Diagnostics) CallError!void {
+        var addresses: std.ArrayList([]const u8) = .empty;
+        defer addresses.deinit(self.gpa);
+        for (indexes) |index| {
+            try addresses.append(self.gpa, work.keys[index]);
+        }
+        const request_body = try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items }, .{});
+        defer self.gpa.free(request_body);
+
+        const attempt: ChunkAttempt = .{
+            .client = self,
+            .body = request_body,
+            .timeout = work.timeout orelse self.timeout,
+            .diag = diag,
+        };
+        const retries = work.retries orelse self.retries;
+        var parsed = try http.retrying(Parsed(std.json.Value), self.io, retries, diag, null, attempt, ChunkAttempt.run);
+        defer parsed.deinit();
+        const results = member(parsed.value, "results");
+        const failures = member(parsed.value, "errors");
+        for (indexes) |index| {
+            work.entries[index] = try self.entryFor(work, index, results, failures);
+        }
+    }
+
+    /// One address's entry from the two maps of a batch answer. A served answer
+    /// is re-encoded on its own, so the entry's `raw` and the cache hold exactly
+    /// what a single lookup would have.
+    fn entryFor(
+        self: *Client,
+        work: *Work,
+        index: usize,
+        results: ?std.json.ObjectMap,
+        failures: ?std.json.ObjectMap,
+    ) Allocator.Error!Batch.Entry {
+        const ip = work.keys[index];
+        if (results) |served| {
+            if (served.get(ip)) |value| {
+                const encoded = try std.json.Stringify.valueAlloc(self.gpa, value, .{});
+                defer self.gpa.free(encoded);
+                var diag: Diagnostics = .{};
+                const answer = self.parse(encoded, &diag) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        diag.status = 200;
+                        self.landEntry(work, index, .{ .failed = .{ .err = err, .diagnostics = diag } });
+                        return .{ .failed = .{ .err = err, .diagnostics = diag } };
+                    },
+                };
+                self.landEntry(work, index, .{ .served = encoded });
+                return .{ .ok = answer };
+            }
+        }
+        if (failures) |failed| {
+            if (failed.get(ip)) |value| {
+                const failure = entryFailure(value);
+                self.landEntry(work, index, .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } });
+                return .{ .failed = failure };
+            }
+        }
+        var failure: Batch.Failure = .{ .err = error.ServerError };
+        failure.diagnostics.status = 200;
+        var text: [Diagnostics.max_message_len]u8 = undefined;
+        const message = std.fmt.bufPrint(&text, "the batch answer did not include {s}", .{ip}) catch &text;
+        failure.diagnostics.setMessage(message);
+        self.landEntry(work, index, .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } });
+        return .{ .failed = failure };
     }
 
     /// The licensed database downloads, for keys carrying the `db.download`
@@ -139,7 +797,220 @@ pub const Client = struct {
     pub fn oauth(self: *Client) oauth_mod.OauthApi {
         return .{ .client = self };
     }
+
+    fn parse(self: *Client, body: []const u8, diag: *Diagnostics) CallError!Lookup {
+        return parseAs(lookup_mod.Answer, self.gpa, body, diag);
+    }
 };
+
+/// What a batch answers: one entry per distinct address, in the order the
+/// addresses were first seen.
+pub const Batch = struct {
+    gpa: Allocator,
+    entries: std.StringArrayHashMapUnmanaged(Entry) = .empty,
+
+    pub const Entry = union(enum) {
+        ok: Lookup,
+        failed: Failure,
+    };
+
+    /// A failure carries its own diagnostics, so one bad address in a batch
+    /// still explains itself.
+    pub const Failure = struct {
+        err: CallError,
+        diagnostics: Diagnostics = .{},
+    };
+
+    pub fn deinit(self: *Batch) void {
+        for (self.entries.keys()) |key| {
+            self.gpa.free(key);
+        }
+        for (self.entries.values()) |entry| {
+            switch (entry) {
+                .ok => |answer| answer.deinit(),
+                .failed => {},
+            }
+        }
+        self.entries.deinit(self.gpa);
+        self.* = undefined;
+    }
+
+    pub fn get(self: *const Batch, ip: []const u8) ?Entry {
+        return self.entries.get(ip);
+    }
+
+    /// The addresses, in the order they were first seen.
+    pub fn keys(self: *const Batch) []const []const u8 {
+        return self.entries.keys();
+    }
+
+    pub fn values(self: *const Batch) []const Entry {
+        return self.entries.values();
+    }
+
+    pub fn count(self: *const Batch) usize {
+        return self.entries.count();
+    }
+};
+
+const AddressAttempt = LookupAttempt(lookup_mod.Answer);
+
+/// One request for a lookup-shaped answer and the read of it, which
+/// `http.retrying` repeats: a body that is not a `T` is retried like a 5xx.
+fn LookupAttempt(comptime T: type) type {
+    return struct {
+        client: *Client,
+        path: []const u8,
+        timeout: Io.Duration,
+        diag: *Diagnostics,
+        canceled: ?*bool = null,
+
+        fn run(self: @This()) CallError!lookup_mod.Served(T) {
+            const body = try http.send(&self.client.transport, self.client.gpa, self.client.io, .{
+                .path = self.path,
+                .retries = 0,
+                .timeout = self.timeout,
+                .diagnostics = self.diag,
+                .canceled = self.canceled,
+            });
+            defer self.client.gpa.free(body);
+            return parseAs(T, self.client.gpa, body, self.diag);
+        }
+    };
+}
+
+/// A served answer, or the retried `error.ServerError` for a body that is not
+/// one.
+fn parseAs(comptime T: type, gpa: Allocator, body: []const u8, diag: *Diagnostics) CallError!lookup_mod.Served(T) {
+    return lookup_mod.parseServed(T, gpa, body) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Malformed => {
+            diag.setMessage("the answer was not a lookup response");
+            return error.ServerError;
+        },
+    };
+}
+
+/// One `POST /batch` and the read of its answer, which `http.retrying`
+/// repeats. An answer holding neither map cannot be read as a whole and is
+/// retried like a 5xx; one entry that cannot be read is that address's error
+/// alone, never retried.
+const ChunkAttempt = struct {
+    client: *Client,
+    body: []const u8,
+    timeout: Io.Duration,
+    diag: *Diagnostics,
+
+    fn run(self: ChunkAttempt) CallError!Parsed(std.json.Value) {
+        const gpa = self.client.gpa;
+        const body = try http.send(&self.client.transport, gpa, self.client.io, .{
+            .method = .POST,
+            .path = "/batch",
+            .body = self.body,
+            .retries = 0,
+            .timeout = self.timeout,
+            .diagnostics = self.diag,
+        });
+        defer gpa.free(body);
+
+        // Every string is copied, since the body is freed before the entries
+        // are read.
+        const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{
+            .allocate = .alloc_always,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                self.diag.setMessage("the answer was not a batch response");
+                return error.ServerError;
+            },
+        };
+        if (member(parsed.value, "results") == null and member(parsed.value, "errors") == null) {
+            parsed.deinit();
+            self.diag.setMessage("the answer was not a batch response");
+            return error.ServerError;
+        }
+        return parsed;
+    }
+};
+
+/// A batch entry whose carried address an earlier entry was asked under.
+const Follower = struct {
+    index: usize,
+    leader: usize,
+};
+
+const Flight = cache_mod.Cache.Flight;
+
+/// An address a batch waits for someone else's request about. The flight is
+/// let go of once waited for.
+const Wait = struct {
+    index: usize,
+    flight: ?*Flight,
+};
+
+const Work = struct {
+    client: *Client,
+    /// What each entry is sent as: the address it carries.
+    keys: []const []const u8,
+    entries: []Batch.Entry,
+    /// The flight each entry leads, until its chunk lands it.
+    flights: []?*Flight,
+    /// The indexes of the entries still to be answered, chunked by position.
+    pending: []const usize,
+    next_chunk: std.atomic.Value(usize),
+    retries: ?u32,
+    timeout: ?Io.Duration,
+};
+
+/// Each worker takes the next chunk until there are none left, so in-flight
+/// requests never exceed the worker count and a slow chunk cannot leave a
+/// worker idle. Every entry is written by exactly one worker, at its own index.
+fn runWorker(work: *Work) void {
+    while (true) {
+        const chunk = work.next_chunk.fetchAdd(1, .monotonic);
+        const from = chunk * batch_max;
+        if (from >= work.pending.len) {
+            return;
+        }
+        const to = @min(from + batch_max, work.pending.len);
+        work.client.lookupChunk(work, work.pending[from..to]);
+    }
+}
+
+/// A member of a JSON object that is itself an object, or null.
+fn member(value: std.json.Value, name: []const u8) ?std.json.ObjectMap {
+    if (value != .object) {
+        return null;
+    }
+    const found = value.object.get(name) orelse return null;
+    return if (found == .object) found.object else null;
+}
+
+/// A per-entry failure inside a successful batch: the status the single lookup
+/// would have answered, and its message, with no headers at all - so a 429 here
+/// is a spent allowance, which is the only kind the API puts in an entry.
+fn entryFailure(value: std.json.Value) Batch.Failure {
+    var failure: Batch.Failure = .{ .err = error.ServerError };
+    failure.diagnostics.status = 200;
+    if (value != .object) {
+        failure.diagnostics.setMessage("the entry was not an object");
+        return failure;
+    }
+    var status: u16 = 500;
+    if (value.object.get("status")) |given| {
+        if (given == .integer) {
+            status = std.math.cast(u16, given.integer) orelse 500;
+        }
+    }
+    failure.err = errors.classify(status, false);
+    failure.diagnostics.status = status;
+    if (value.object.get("error")) |message| {
+        if (message == .string) {
+            failure.diagnostics.setMessage(message.string);
+        }
+    }
+    return failure;
+}
 
 test "a client builds with no key, an empty one, or a blank one" {
     const gpa = std.testing.allocator;
@@ -151,4 +1022,15 @@ test "a client builds with no key, an empty one, or a blank one" {
         defer client.deinit();
         try std.testing.expectEqual(@as(?[]const u8, null), client.transport.authorization);
     }
+}
+
+test "oauth goes to the apex of the default host" {
+    const gpa = std.testing.allocator;
+    var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+
+    var client = try Client.init(gpa, threaded.io(), .{});
+    defer client.deinit();
+    try std.testing.expectEqualStrings("https://api.internetdata.io", client.transport.base_url);
+    try std.testing.expectEqualStrings("https://internetdata.io", client.transport.oauth_base_url);
 }

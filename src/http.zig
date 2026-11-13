@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const errors = @import("errors.zig");
+const strict = @import("strict.zig");
 
 const Allocator = std.mem.Allocator;
 const CallError = errors.CallError;
@@ -24,13 +25,20 @@ pub fn validTimeout(timeout: Io.Duration) bool {
 pub const Request = struct {
     /// Whether the answer is the body or the `Location` of a redirect.
     kind: enum { json, location } = .json,
+    method: std.http.Method = .GET,
     path: []const u8,
     query: []const Transport.Param = &.{},
+    /// The JSON body of a POST; empty for a GET.
+    body: []const u8 = "",
     retries: u32,
     /// How long ONE attempt may take, from the connection to the last byte of
     /// the answer. A retry starts a fresh one.
     timeout: Io.Duration,
     diagnostics: *Diagnostics,
+    /// Set when the call ends because its task was canceled, for a caller that
+    /// must tell that from a failure: the request it leads for others is then
+    /// abandoned rather than failed.
+    canceled: ?*bool = null,
 };
 
 /// Retries a transient failure, waiting whatever the server asked for over the
@@ -51,7 +59,16 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
         if (bounded(io, request.timeout, diag, attempt, .{ transport, gpa, request })) |body| {
             return body;
         } else |err| {
-            if (remaining == 0 or !errors.isRetryable(err) or !backOff(io, diag, &delay)) {
+            if (remaining == 0 or !errors.isRetryable(err)) {
+                if (request.canceled) |canceled| {
+                    canceled.* = wasCanceled(io);
+                }
+                return err;
+            }
+            if (!backOff(io, diag, &delay)) {
+                if (request.canceled) |canceled| {
+                    canceled.* = true;
+                }
                 return err;
             }
             remaining -= 1;
@@ -59,9 +76,20 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     }
 }
 
+/// Whether the task has a cancelation outstanding, which `bounded` re-arms when
+/// it cancels an attempt. It stays armed for the caller's next cancelation point.
+fn wasCanceled(io: Io) bool {
+    io.checkCancel() catch {
+        io.recancel();
+        return true;
+    };
+    return false;
+}
+
 /// Refuses a timeout `validTimeout` rejects. `send` and `sendOauth` run it on
-/// every request; the poll runs it before its first wait, or the bad value
-/// would pass whenever the code expired before a request went out.
+/// every request; a call that can answer without one - a bogon, a cached
+/// answer, the poll's first wait - runs it first, or the bad value would pass
+/// whenever no request happened to be needed.
 pub fn checkTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error!void {
     if (!validTimeout(timeout)) {
         return refuseTimeout(diag, timeout);
@@ -70,7 +98,7 @@ pub fn checkTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error!void 
 
 /// A timeout `validTimeout` rejects is the caller's mistake, refused the way
 /// the API refuses a bad argument: `error.BadRequest`, never retried.
-fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
+pub fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
     diag.reset();
     var text: [Diagnostics.max_message_len]u8 = undefined;
     diag.setMessage(std.fmt.bufPrint(&text, "timeout must be positive and at most {d} ns, got {d} ns", .{
@@ -83,7 +111,10 @@ fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
 fn attempt(transport: *Transport, gpa: Allocator, request: Request) CallError![]u8 {
     const diag = request.diagnostics;
     return switch (request.kind) {
-        .json => transport.getJson(gpa, request.path, request.query, diag),
+        .json => if (request.method == .POST)
+            transport.postJson(gpa, request.path, request.body, diag)
+        else
+            transport.getJson(gpa, request.path, request.query, diag),
         .location => transport.getLocation(gpa, request.path, request.query, diag),
     };
 }
@@ -167,6 +198,83 @@ pub fn backOff(io: Io, diag: *const Diagnostics, delay: *Io.Duration) bool {
     return true;
 }
 
+/// Repeats `attemptFn`, one request AND the read of its answer, the way `send`
+/// repeats a request alone: an answer the call cannot read is the server's
+/// fault like any 5xx, so it is retried too, carrying the status it came with.
+/// Read after the retries were spent, as through 4.5.2, it failed after
+/// exactly one request. `attemptFn` sends with no retries of its own; a wait
+/// canceled between attempts ends the call and sets `canceled`.
+pub fn retrying(
+    comptime T: type,
+    io: Io,
+    retries: u32,
+    diag: *const Diagnostics,
+    canceled: ?*bool,
+    context: anytype,
+    comptime attemptFn: fn (@TypeOf(context)) CallError!T,
+) CallError!T {
+    var delay = retry_base_delay;
+    var remaining = retries;
+    while (true) {
+        if (attemptFn(context)) |value| {
+            return value;
+        } else |err| {
+            if (remaining == 0 or !errors.isRetryable(err)) {
+                return err;
+            }
+            if (!backOff(io, diag, &delay)) {
+                if (canceled) |flag| {
+                    flag.* = true;
+                }
+                return err;
+            }
+            remaining -= 1;
+        }
+    }
+}
+
+/// A GET whose answer is parsed into `T`, owned by the caller: each attempt is
+/// the request and the parse together, under `retrying`. Parsed from a copy
+/// the arena owns, so every string in the answer outlives the body.
+pub fn getParsed(
+    comptime T: type,
+    transport: *Transport,
+    gpa: Allocator,
+    io: Io,
+    request: Request,
+) CallError!std.json.Parsed(T) {
+    const Attempt = struct {
+        transport: *Transport,
+        gpa: Allocator,
+        io: Io,
+        request: Request,
+
+        fn run(self: @This()) CallError!std.json.Parsed(T) {
+            var single = self.request;
+            single.retries = 0;
+            const body = try send(self.transport, self.gpa, self.io, single);
+            defer self.gpa.free(body);
+
+            const parsed = try self.gpa.create(std.heap.ArenaAllocator);
+            errdefer self.gpa.destroy(parsed);
+            parsed.* = .init(self.gpa);
+            errdefer parsed.deinit();
+
+            const arena = parsed.allocator();
+            const owned = try arena.dupe(u8, body);
+            const value = strict.parseLeaky(T, arena, owned, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                self.request.diagnostics.setMessage("the answer did not match the documented shape");
+                return error.ServerError;
+            };
+            return .{ .arena = parsed, .value = value };
+        }
+    };
+    const once: Attempt = .{ .transport = transport, .gpa = gpa, .io = io, .request = request };
+    return retrying(std.json.Parsed(T), io, request.retries, request.diagnostics, null, once, Attempt.run);
+}
+
 /// One OAuth request: a GET, or a POST of a form body that is already encoded.
 pub const OauthRequest = struct {
     method: std.http.Method = .GET,
@@ -213,21 +321,25 @@ pub fn sendOauth(
     }
 }
 
-/// Every request the library makes: the five GET operations, and the OAuth
-/// requests.
+/// Every request the library makes: the GET operations, the batch POST and the
+/// OAuth requests.
 pub const Transport = struct {
     http: std.http.Client,
     /// Without a trailing slash.
     base_url: []const u8,
+    /// Where the OAuth requests go: the apex of `base_url`'s host, since the
+    /// authorization server is mounted there rather than on the API host.
+    oauth_base_url: []const u8,
     /// `Authorization: Bearer <key>`, built once and owned, so a caller is free
     /// to drop the key it passed in. Null when the client holds no key, and the
     /// header is then left off entirely rather than sent empty.
     authorization: ?[]const u8,
 
     /// A response body may not exceed this. The largest thing the API answers
-    /// with is a metadata document; anything at this size is a server fault
-    /// rather than an answer worth buffering. The dataset itself never comes
-    /// through here - it arrives on a `Transfer`, which is not buffered at all.
+    /// with is an AS's lookup or a metadata document; anything at this size is a
+    /// server fault rather than an answer worth buffering. The database itself
+    /// never comes through here - it arrives on a `Transfer`, which is not
+    /// buffered at all.
     pub const max_body_bytes = 16 * 1024 * 1024;
 
     pub const Param = struct { name: []const u8, value: []const u8 };
@@ -250,13 +362,98 @@ pub const Transport = struct {
         var request = try self.open(url, diag);
         defer request.deinit();
         var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+        return readJson(&response, gpa, self.http.io, diag);
+    }
+
+    /// The body of a 2xx JSON response to a POST carrying `body`, owned by
+    /// `gpa`. The one request with a body: the batch.
+    pub fn postJson(
+        self: *Transport,
+        gpa: Allocator,
+        path: []const u8,
+        body: []const u8,
+        diag: *Diagnostics,
+    ) CallError![]u8 {
+        const url = try self.buildUrl(gpa, path, &.{});
+        defer gpa.free(url);
+        // `sendBodyComplete` takes the bytes as mutable, so the body is copied.
+        const payload = try gpa.dupe(u8, body);
+        defer gpa.free(payload);
+
+        var request = try self.openPost(url, diag);
+        defer request.deinit();
+        request.sendBodyComplete(payload) catch |err| return fail(diag, err);
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+        return readJson(&response, gpa, self.http.io, diag);
+    }
+
+    /// The body of a 2xx answer to an OAuth request, owned by `gpa`.
+    ///
+    /// No `Authorization` at all, whatever the client holds: these endpoints
+    /// have no use for the key, and on the token endpoint the header would read
+    /// as client authentication, which these public clients do not have.
+    fn oauthAttempt(
+        self: *Transport,
+        gpa: Allocator,
+        oauth: OauthRequest,
+        diag: *Diagnostics,
+    ) errors.OauthCallError![]u8 {
+        const url = try joinUrl(gpa, self.oauth_base_url, oauth.path, &.{});
+        defer gpa.free(url);
+        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
+        var request = self.http.request(oauth.method, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = .omit,
+                .user_agent = .{ .override = user_agent },
+                .content_type = if (oauth.method == .POST)
+                    .{ .override = oauth.content_type }
+                else
+                    .default,
+            },
+        }) catch |err| return fail(diag, err);
+        defer request.deinit();
+        if (oauth.method == .POST) {
+            // `sendBodyComplete` takes the bytes as mutable, so the body is copied.
+            const payload = try gpa.dupe(u8, oauth.form);
+            defer gpa.free(payload);
+            request.sendBodyComplete(payload) catch |err| return fail(diag, err);
+        } else {
+            request.sendBodiless() catch |err| return fail(diag, err);
+        }
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
 
         const status = @intFromEnum(response.head.status);
         diag.status = status;
         const retry_after = readRetryAfter(response.head, self.http.io);
         diag.retry_after_s = retry_after.seconds;
-
         const body = try readBody(&response, gpa, diag);
+        if (status >= 200 and status < 300) {
+            return body;
+        }
+        defer gpa.free(body);
+        // Only a 4xx can be a refusal. Every 5xx is the server failing, whatever
+        // its body says.
+        if (status >= 400 and status < 500) {
+            if (errors.oauthRefusal(gpa, body, diag)) |refusal| {
+                return refusal;
+            }
+        }
+        if (errors.envelopeMessage(gpa, body)) |message| {
+            defer gpa.free(message);
+            diag.setMessage(message);
+        }
+        return errors.classify(status, retry_after.present);
+    }
+
+    /// A 2xx body, or the failure a non-2xx describes.
+    fn readJson(response: *std.http.Client.Response, gpa: Allocator, io: Io, diag: *Diagnostics) CallError![]u8 {
+        const status = @intFromEnum(response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(response.head, io);
+        diag.retry_after_s = retry_after.seconds;
+
+        const body = try readBody(response, gpa, diag);
         if (status < 200 or status >= 300) {
             defer gpa.free(body);
             if (errors.envelopeMessage(gpa, body)) |message| {
@@ -314,81 +511,41 @@ pub const Transport = struct {
         return errors.classify(status, retry_after.present);
     }
 
-    /// The body of a 2xx answer to an OAuth request, owned by `gpa`.
-    ///
-    /// No `Authorization` at all, whatever the client holds: these endpoints
-    /// have no use for the key, and on the token endpoint the header would read
-    /// as client authentication, which these public clients do not have.
-    fn oauthAttempt(
-        self: *Transport,
-        gpa: Allocator,
-        oauth: OauthRequest,
-        diag: *Diagnostics,
-    ) errors.OauthCallError![]u8 {
-        const url = try self.buildUrl(gpa, oauth.path, &.{});
-        defer gpa.free(url);
-        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
-        var request = self.http.request(oauth.method, uri, .{
-            .redirect_behavior = .unhandled,
-            .headers = .{
-                .authorization = .omit,
-                .user_agent = .{ .override = user_agent },
-                .content_type = if (oauth.method == .POST)
-                    .{ .override = oauth.content_type }
-                else
-                    .default,
-            },
-        }) catch |err| return fail(diag, err);
-        defer request.deinit();
-        if (oauth.method == .POST) {
-            // `sendBodyComplete` takes the bytes as mutable, so the body is copied.
-            const payload = try gpa.dupe(u8, oauth.form);
-            defer gpa.free(payload);
-            request.sendBodyComplete(payload) catch |err| return fail(diag, err);
-        } else {
-            request.sendBodiless() catch |err| return fail(diag, err);
-        }
-        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
-
-        const status = @intFromEnum(response.head.status);
-        diag.status = status;
-        const retry_after = readRetryAfter(response.head, self.http.io);
-        diag.retry_after_s = retry_after.seconds;
-        const body = try readBody(&response, gpa, diag);
-        if (status >= 200 and status < 300) {
-            return body;
-        }
-        defer gpa.free(body);
-        // Only a 4xx can be a refusal. Every 5xx is the server failing, whatever
-        // its body says.
-        if (status >= 400 and status < 500) {
-            if (errors.oauthRefusal(gpa, body, diag)) |refusal| {
-                return refusal;
-            }
-        }
-        if (errors.envelopeMessage(gpa, body)) |message| {
-            defer gpa.free(message);
-            diag.setMessage(message);
-        }
-        return errors.classify(status, retry_after.present);
+    fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
+        return self.openWith(url, try self.authorizationHeader(diag), .default, diag);
     }
 
-    fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
-        const authorization: std.http.Client.Request.Headers.Value =
-            if (self.authorization) |value| .{ .override = value } else .omit;
-        // `std.http.Client` writes a header value out as given, so a control
-        // character left inside the key would reach the wire, and a CR LF would
-        // start a header of its own. Refused here, before anything is sent,
-        // because `Client.init`'s error set has no member for it.
-        if (self.authorization) |value| {
-            for (value) |c| {
-                if (c < 0x20 or c == 0x7f) {
-                    diag.setMessage("the API key holds a control character");
-                    return error.BadRequest;
-                }
+    /// The `Authorization` a request carries. `std.http.Client` writes a header
+    /// value out as given, so a control character left inside the key would
+    /// reach the wire, and a CR LF would start a header of its own. Refused
+    /// here, before anything is sent, because `Client.init`'s error set has no
+    /// member for it.
+    fn authorizationHeader(self: *const Transport, diag: *Diagnostics) CallError!std.http.Client.Request.Headers.Value {
+        const value = self.authorization orelse return .omit;
+        for (value) |c| {
+            if (c < 0x20 or c == 0x7f) {
+                diag.setMessage("the API key holds a control character");
+                return error.BadRequest;
             }
         }
-        return self.openWith(url, authorization, .default, diag);
+        return .{ .override = value };
+    }
+
+    /// A POST with a JSON body, opened but not yet sent: the caller hands the
+    /// body to `sendBodyComplete`, which writes head and body together.
+    fn openPost(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
+        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
+        const authorization = try self.authorizationHeader(diag);
+        var request = self.http.request(.POST, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = authorization,
+                .user_agent = .{ .override = user_agent },
+                .content_type = .{ .override = "application/json" },
+            },
+        }) catch |err| return fail(diag, err);
+        errdefer request.deinit();
+        return request;
     }
 
     /// Which content encodings the answer may arrive in. A database transfer
@@ -436,17 +593,7 @@ pub const Transport = struct {
         path: []const u8,
         query: []const Param,
     ) Allocator.Error![]u8 {
-        var url: std.ArrayList(u8) = .empty;
-        errdefer url.deinit(gpa);
-        try url.appendSlice(gpa, self.base_url);
-        try url.appendSlice(gpa, path);
-        for (query, 0..) |param, i| {
-            try url.append(gpa, if (i == 0) '?' else '&');
-            try url.appendSlice(gpa, param.name);
-            try url.append(gpa, '=');
-            try appendEncoded(gpa, &url, param.value);
-        }
-        return url.toOwnedSlice(gpa);
+        return joinUrl(gpa, self.base_url, path, query);
     }
 
     /// A transport failure is worth another attempt whatever its cause, so every
@@ -739,8 +886,47 @@ fn allDigits(text: []const u8) bool {
     return true;
 }
 
+fn joinUrl(gpa: Allocator, base: []const u8, path: []const u8, query: []const Transport.Param) Allocator.Error![]u8 {
+    var url: std.ArrayList(u8) = .empty;
+    errdefer url.deinit(gpa);
+    try url.appendSlice(gpa, base);
+    try url.appendSlice(gpa, path);
+    for (query, 0..) |param, i| {
+        try url.append(gpa, if (i == 0) '?' else '&');
+        try url.appendSlice(gpa, param.name);
+        try url.append(gpa, '=');
+        try appendEncoded(gpa, &url, param.value);
+    }
+    return url.toOwnedSlice(gpa);
+}
+
+/// The base URL the OAuth requests go to, owned by `gpa`: the apex of
+/// `base_url`'s host, where the authorization server is, so `api.` is dropped
+/// and `api-<env>.` becomes `<env>.`. Any other base URL is used as given.
+pub fn oauthBaseUrl(gpa: Allocator, base_url: []const u8) Allocator.Error![]u8 {
+    const uri = std.Uri.parse(base_url) catch return gpa.dupe(u8, base_url);
+    const component = uri.host orelse return gpa.dupe(u8, base_url);
+    const host = switch (component) {
+        .raw, .percent_encoded => |text| text,
+    };
+    const dot = std.mem.indexOfScalar(u8, host, '.') orelse return gpa.dupe(u8, base_url);
+    const label = host[0..dot];
+    const derived = std.ascii.eqlIgnoreCase(label, "api") or
+        (label.len > 4 and std.ascii.startsWithIgnoreCase(label, "api-"));
+    if (!derived or dot + 1 == host.len) {
+        return gpa.dupe(u8, base_url);
+    }
+    // `host` is a slice of `base_url`, so what surrounds it is kept as written,
+    // and `api.` and `api-` are both the four characters dropped.
+    const start = @intFromPtr(host.ptr) - @intFromPtr(base_url.ptr);
+    return std.mem.concat(gpa, u8, &.{ base_url[0..start], base_url[start + 4 ..] });
+}
+
 /// Percent-encodes everything outside the unreserved set, so a database ID that
-/// is not what the API documents cannot escape its query parameter.
+/// is not what the API documents cannot escape its query parameter, and a domain
+/// cannot escape its path segment. An IPv6 literal contains colons, which are
+/// legal in a path segment but are worth encoding anyway so an intermediary
+/// cannot read one as an authority.
 pub fn appendEncoded(gpa: Allocator, out: *std.ArrayList(u8), text: []const u8) Allocator.Error!void {
     for (text) |c| {
         switch (c) {
@@ -756,6 +942,42 @@ test "a query value is percent encoded" {
     defer out.deinit(gpa);
     try appendEncoded(gpa, &out, "bogon_ip_v1&format=mmdb");
     try std.testing.expectEqualStrings("bogon_ip_v1%26format%3Dmmdb", out.items);
+}
+
+// The authorization server is mounted on the apex, not on the API host:
+// `https://api.internetdata.io/.well-known/oauth-authorization-server` answers
+// 404 (measured 2026-11-13).
+test "the OAuth base is the apex of the API host" {
+    const gpa = std.testing.allocator;
+    const cases = [_][2][]const u8{
+        .{ "https://api.internetdata.io", "https://internetdata.io" },
+        .{ "https://api-eu.internetdata.io", "https://eu.internetdata.io" },
+        .{ "https://API.internetdata.io:8443/v", "https://internetdata.io:8443/v" },
+        .{ "https://internetdata.io", "https://internetdata.io" },
+        .{ "https://eu.internetdata.io", "https://eu.internetdata.io" },
+        .{ "http://127.0.0.1:8080", "http://127.0.0.1:8080" },
+        .{ "http://localhost:8080", "http://localhost:8080" },
+        .{ "https://apis.example.com", "https://apis.example.com" },
+        .{ "https://api-.example.com", "https://api-.example.com" },
+        .{ "https://api.", "https://api." },
+        .{ "https://gateway.example.com/api.internetdata.io", "https://gateway.example.com/api.internetdata.io" },
+    };
+    for (cases) |case| {
+        const got = try oauthBaseUrl(gpa, case[0]);
+        defer gpa.free(got);
+        std.testing.expectEqualStrings(case[1], got) catch |err| {
+            std.debug.print("{s}\n", .{case[0]});
+            return err;
+        };
+    }
+}
+
+test "an address is percent encoded into the path" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try appendEncoded(gpa, &out, "2606:4700:4700::1111");
+    try std.testing.expectEqualStrings("2606%3A4700%3A4700%3A%3A1111", out.items);
 }
 
 test "a Retry-After count is digits and nothing else" {

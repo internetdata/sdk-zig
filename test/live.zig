@@ -1,17 +1,72 @@
 //! A smoke test against the real API, kept out of `zig build test` so the suite
-//! stays offline and needs no credential.
+//! stays offline and costs no quota. Without INTERNETDATA_API_KEY the lookups
+//! run without a key and the catalog is skipped.
 //!
+//!     ./scripts/zig.sh build live
 //!     INTERNETDATA_API_KEY=... ./scripts/zig.sh build live
 //!
-//! It asserts the two things a stub cannot say honestly: that a real key reaches
-//! a real catalog, and that the metadata document for a licensed database
-//! carries a size per format that a caller could budget a transfer against.
-//! Nothing here downloads anything.
+//! It asserts what a stub cannot say honestly: that a member a plan leaves out
+//! is ABSENT rather than false, that a real key reaches a real catalog, and
+//! that the metadata document for a licensed database carries a size per format
+//! that a caller could budget a transfer against. Nothing here downloads
+//! anything.
 
 const std = @import("std");
 const internetdata = @import("internetdata");
 
 const Io = std.Io;
+
+test "live lookup" {
+    const gpa = std.testing.allocator;
+    var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+
+    const key = std.testing.environ.getPosix("INTERNETDATA_API_KEY") orelse "";
+    var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
+    defer client.deinit();
+
+    const result = try client.lookup("146.70.116.130");
+    defer result.deinit();
+    std.debug.print("146.70.116.130: {s}, {s}, is_vpn={?} city={?s} trial_expired={?}\n", .{
+        result.value.location.country,
+        result.value.asn.name,
+        result.value.is_vpn,
+        result.value.location.city,
+        result.value.trial_expired,
+    });
+    try std.testing.expectEqualStrings("146.70.116.130", result.value.ip);
+    try std.testing.expect(!result.value.is_bogon);
+    try std.testing.expect(result.value.asn.asn > 0);
+    if (key.len == 0) {
+        // The one assertion a stub cannot make honestly: an answer without a key
+        // leaves the paid members out, so they are ABSENT rather than false.
+        try std.testing.expectEqual(@as(?bool, null), result.value.is_vpn);
+        try std.testing.expectEqual(@as(?[]const u8, null), result.value.location.city);
+        try std.testing.expectEqual(@as(?bool, null), result.value.trial_expired);
+    }
+
+    const network = try client.lookupAsn(9009);
+    defer network.deinit();
+    std.debug.print("AS9009: {s} ({s}), num_ips={?d}\n", .{ network.value.name, network.value.registry, network.value.num_ips });
+    try std.testing.expectEqual(9009, network.value.asn);
+    if (key.len == 0) {
+        try std.testing.expectEqual(@as(?i64, null), network.value.num_ips);
+    }
+
+    const domain = try client.lookupDomain("example.com");
+    defer domain.deinit();
+    std.debug.print("example.com: registered={} has_mx={}\n", .{ domain.value.is_registered, domain.value.has_mx });
+    try std.testing.expectEqualStrings("example.com", domain.value.domain);
+    if (key.len == 0) {
+        try std.testing.expect(domain.value.dns == null);
+    }
+
+    const private = try client.lookup("192.168.1.1");
+    defer private.deinit();
+    std.debug.print("192.168.1.1: is_bogon={} (answered locally)\n", .{private.value.is_bogon});
+    try std.testing.expect(private.value.is_bogon);
+    try std.testing.expectEqual(0, private.raw.len);
+}
 
 test "live catalog" {
     const gpa = std.testing.allocator;

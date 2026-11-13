@@ -18,8 +18,82 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
 
+    var keyless = try internetdata.Client.init(gpa, threaded.io(), .{});
+    defer keyless.deinit();
+
+    const result = try keyless.lookup("146.70.116.130");
+    defer result.deinit();
+    std.debug.print("{s}\n", .{result.value.location.country});
+    std.debug.print("{s}\n", .{result.value.asn.name});
+    std.debug.print("{s}\n", .{result.value.company.name});
+
     var client = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key });
     defer client.deinit();
+
+    const paid = try client.lookup("146.70.116.130");
+    defer paid.deinit();
+    std.debug.print("{}\n", .{paid.value.is_vpn orelse false});
+    std.debug.print("{s}\n", .{paid.value.vpn.?.provider_name.?});
+    std.debug.print("{s}\n", .{paid.value.location.city.?});
+
+    const network = try client.lookupAsn(9009);
+    defer network.deinit();
+    std.debug.print("{s}\n", .{network.value.name});
+
+    const domain = try client.lookupDomain("example.com");
+    defer domain.deinit();
+    std.debug.print("{}\n", .{domain.value.has_mx});
+
+    const mine = try client.myIp();
+    defer mine.deinit();
+    std.debug.print("{s}\n", .{mine.value.ip});
+
+    const acct = try client.myEntitlement();
+    defer acct.deinit();
+    std.debug.print("{s}\n", .{acct.value.plan.key});
+    std.debug.print("{d}\n", .{acct.value.usage.requests});
+
+    var batch = try client.lookupBatch(&.{ "146.70.116.130", "8.8.8.8", "1.1.1.1" }, .{});
+    defer batch.deinit();
+    for (batch.keys(), batch.values()) |ip, entry| {
+        switch (entry) {
+            .ok => |answer| std.debug.print("{s}: {s}\n", .{ ip, answer.value.asn.name }),
+            .failed => |failure| std.debug.print("{s}: {s}\n", .{ ip, failure.diagnostics.message() }),
+        }
+    }
+    const many_ips: []const []const u8 = &.{"1.1.1.1"};
+    var wider = try client.lookupBatch(many_ips, .{ .concurrency = 4, .retries = 4 });
+    defer wider.deinit();
+
+    var sized = try internetdata.Client.init(gpa, threaded.io(), .{
+        .cache = .{ .max_entries = 50_000, .ttl = .fromSeconds(6 * 60 * 60) },
+    });
+    defer sized.deinit();
+    var uncached = try internetdata.Client.init(gpa, threaded.io(), .{ .cache = null });
+    defer uncached.deinit();
+
+    const bogon = try client.lookup("192.168.1.1");
+    defer bogon.deinit();
+    std.debug.print("{} {d}\n", .{ bogon.value.is_bogon, bogon.raw.len });
+    std.debug.print("{} {}\n", .{ client.isBogon("10.0.0.1"), internetdata.isBogon("8.8.8.8") });
+
+    const vpn = result.value.is_vpn orelse false;
+    _ = vpn;
+    if (result.value.is_vpn == null or result.value.location.city == null or result.value.trial_expired == true) {
+        std.debug.print("not in this plan\n", .{});
+    }
+
+    var diagnosed: internetdata.Diagnostics = .{};
+    const answer = client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnosed }) catch |err| {
+        std.debug.print("{s} retryable={} status={?} {s}\n", .{
+            internetdata.kindName(err),
+            internetdata.isRetryable(err),
+            diagnosed.status,
+            diagnosed.message(),
+        });
+        return err;
+    };
+    defer answer.deinit();
 
     const catalog = try client.database().list(.{});
     defer catalog.deinit();
@@ -65,24 +139,12 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
         std.debug.print("{s} {s} {s}\n", .{ attempt.created, attempt.dataset_id, attempt.outcome });
     }
 
-    var diagnostics: internetdata.Diagnostics = .{};
-    const again = client.database().list(.{ .diagnostics = &diagnostics }) catch |err| {
-        std.debug.print("{s} retryable={} status={?} {s}\n", .{
-            internetdata.kindName(err),
-            internetdata.isRetryable(err),
-            diagnostics.status,
-            diagnostics.message(),
-        });
-        return err;
-    };
-    defer again.deinit();
-
     const retried = try client.database().list(.{ .retries = 4 });
     defer retried.deinit();
 
-    var bounded = try internetdata.Client.init(gpa, threaded.io(), .{ .api_key = key, .timeout = .fromSeconds(10) });
+    var bounded = try internetdata.Client.init(gpa, threaded.io(), .{ .timeout = .fromSeconds(10) });
     defer bounded.deinit();
-    const quick = try bounded.database().list(.{ .timeout = .fromMilliseconds(500) });
+    const quick = try bounded.lookupWith("1.1.1.1", .{ .timeout = .fromMilliseconds(500) });
     defer quick.deinit();
 
     try signIn(gpa, &threaded);
