@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.11.1 - 2026-11-14
+
+### Fixes
+
+- Re-pin the spec to 2026.11.13 as republished: the ip.lookup scope 403 ([`c1d6df5`](https://github.com/internetdata/sdk-zig/commit/c1d6df592d9d4c7110cbc8713638992a1586d9d1))
+
 ## 2.11.0 - 2026-11-13
 
 ### Features

@@ -10,7 +10,7 @@ It tells you what InternetData's databases say about an IP address, an AS or a d
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.11.0
+zig fetch --save git+https://github.com/internetdata/sdk-zig#v2.11.1
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
