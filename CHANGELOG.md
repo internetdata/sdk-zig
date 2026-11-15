@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.12.0 - 2026-11-15
+
+### Features
+
+- Read hosted_domains' 10 most popular domains ([`7db6b87`](https://github.com/internetdata/sdk-zig/commit/7db6b8795fdfc5ea4c809efdc0a1ba371fde478b))
+
 ## 2.11.1 - 2026-11-14
 
 ### Fixes
