@@ -384,6 +384,8 @@ pub const Rwhois = struct {
 pub const HostedDomains = struct {
     /// How many registered domains resolve to the address.
     total: i64,
+    /// Up to 10 of them, the most popular first; empty when none does.
+    domains: ?[]const []const u8 = null,
 };
 
 /// What the API answers for one autonomous system. Absent is "not in your
@@ -562,7 +564,8 @@ pub fn parseServed(comptime T: type, gpa: Allocator, body: []const u8) ParseErro
 /// The answer a bogon gets, in the full shape the API serves at its widest plan:
 /// every flag present and false, every detail object present and empty, `web`
 /// empty, and location, AS, company, abuse contact and both registry records
-/// with every member empty, `hostname` empty and `hosted_domains` 0.
+/// with every member empty, `hostname` empty and `hosted_domains` 0 with no
+/// domains.
 ///
 /// This is deliberately the WIDEST shape regardless of your plan, so a caller
 /// must not infer which fields their plan includes from a bogon answer.
@@ -613,7 +616,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .abuse = .empty,
         .whois = .empty,
         .rwhois = .empty,
-        .hosted_domains = .{ .total = 0 },
+        .hosted_domains = .{ .total = 0, .domains = &.{} },
     };
     return lookup;
 }
