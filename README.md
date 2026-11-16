@@ -89,7 +89,7 @@ defer domain.deinit();
 std.debug.print("{}\n", .{domain.value.has_mx});
 ```
 
-Both answer on every plan, and a paid one adds an AS's Whois record and the prefixes it announces with their RPKI status, and a domain's DNS records, its organization's IP ranges and whether it's a disposable email domain. Neither is cached or batched. `lookupAsnWith` and `lookupDomainWith` take a call's own options. `lookup` takes an IP address alone, and fails anything else with `BadRequest` before sending it.
+Both answer on every plan, and a paid one adds an AS's Whois record, the prefixes it announces with their RPKI status, its rank, Tier 1 flag, upstreams, peers and downstreams and the domains it hosts, and a domain's DNS records, its organization's IP ranges and whether it's a disposable email domain. Neither is cached or batched. `lookupAsnWith` and `lookupDomainWith` take a call's own options. `lookup` takes an IP address alone, and fails anything else with `BadRequest` before sending it.
 
 ### Your own address
 
@@ -109,6 +109,7 @@ const acct = try client.myEntitlement();
 defer acct.deinit();
 
 std.debug.print("{s}\n", .{acct.value.plan.key});        // max
+std.debug.print("{s}\n", .{acct.value.plan.name});       // Max, the name to show
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
@@ -258,7 +259,7 @@ defer gpa.free(bytes);
 
 `downloadBytes` holds the **entire file** in memory. The catalog spans seven orders of magnitude, from `bogon_asn_v1` at a few hundred bytes to `resproxy_ip_14d_v1` at 5.34 GiB, and a 5.34 GiB database is 5.34 GiB of resident memory here, so reach for it at the small end. `metadata` publishes the size per format without transferring anything, which is how you find out which end you are at.
 
-`downloadUrl` hands back the link rather than the bytes, so you choose how to move the file, hand it to a downloader, or pass it on without passing on your API key. The link is presigned and authorizes itself; it authorizes the START of a transfer, so one already running is not interrupted when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: object storage has no business holding your credential.
+`downloadUrl` hands back the link rather than the bytes, so you choose how to move the file, hand it to a downloader, or pass it on without passing on your API key. The link is presigned and authorizes itself. It only has to be valid when a transfer starts, so one already running isn't cut off when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: object storage has no business holding your credential.
 
 Each of the three downloads the build that is live unless `build` names one. A `database.updated` webhook names the build it announces and carries its `sha256`, so a receiver that downloads after the next publish asks for that build to get the file the hash is of:
 

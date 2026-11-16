@@ -140,9 +140,9 @@ pub const DatabaseApi = struct {
     /// The API answers 302 to object storage and the redirect is NOT followed:
     /// the URL is returned so a caller can decide how to move a file that runs
     /// to gigabytes, hand it to a downloader, or pass it on WITHOUT passing on
-    /// the API key. The link is presigned and so authorizes itself; it
-    /// authorizes the START of a transfer, so one already running is not
-    /// interrupted when it lapses.
+    /// the API key. The link is presigned and so authorizes itself. It only has
+    /// to be valid when a transfer starts, so one already running isn't cut off
+    /// when it lapses.
     pub fn downloadUrl(
         self: DatabaseApi,
         id: []const u8,

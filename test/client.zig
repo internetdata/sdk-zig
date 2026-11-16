@@ -1512,7 +1512,7 @@ const entitlement_body =
     \\{
     \\  "org_id": "85bb51e4-2eb6-4a31-8e4d-02ba8b98fe61",
     \\  "apikey": { "id": "0ab424cc-7619-4dad-b027-afacdc2cedb0", "expires": null, "allowed_cidrs": [] },
-    \\  "plan": { "key": "max", "tier": "max" },
+    \\  "plan": { "key": "max", "name": "Max", "tier": "max" },
     \\  "usage": {
     \\    "requests": 580,
     \\    "quota": 5000000,
@@ -1537,6 +1537,7 @@ test "myEntitlement reports the plan and the usage" {
 
     try std.testing.expectEqualStrings("max", entitlement.value.plan.key);
     try std.testing.expectEqualStrings("max", entitlement.value.plan.tier);
+    try std.testing.expectEqualStrings("Max", entitlement.value.plan.name);
     try std.testing.expectEqual(@as(i64, 580), entitlement.value.usage.requests);
     try std.testing.expectEqual(@as(i64, 5_000_000), entitlement.value.usage.quota);
     // Null means NEVER stop, which is not the same as a limit of zero.
@@ -1616,7 +1617,7 @@ const domain_ok =
     \\"ranges":[{"range":"192.0.2.0/24","name":"N","country":"US"}]}}
 ;
 const entitlement_ok =
-    \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","tier":"max"},
+    \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","name":"Max","tier":"max"},
     \\"usage":{"requests":1,"quota":10,"hard_limit":null,"window_start":"2026-10-01T00:00:00Z","window_end":"2026-11-01T00:00:00.5+02:00"}}
 ;
 

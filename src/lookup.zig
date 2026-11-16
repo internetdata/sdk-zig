@@ -417,8 +417,37 @@ pub const AsnAnswer = struct {
     whois: ?std.json.ArrayHashMap([]const u8) = null,
     /// What it announces, IPv4 then IPv6, up to 20000 a family.
     prefixes: ?[]const AsnPrefix = null,
+    /// Its rank in ASN Extended by customer cone, 1 the largest; 0 for an AS
+    /// seen in no AS path.
+    rank: ?i64 = null,
+    /// Whether it is one of the transit-free networks at the top of the
+    /// hierarchy.
+    tier1: ?bool = null,
+    /// How many AS numbers it gets transit from.
+    num_upstreams: ?i64 = null,
+    /// Those AS numbers, ascending, up to 20000.
+    upstreams: ?[]const i64 = null,
+    /// How many AS numbers it exchanges its own and its customers' routes with.
+    num_peers: ?i64 = null,
+    /// Those AS numbers, ascending, up to 20000.
+    peers: ?[]const i64 = null,
+    /// How many AS numbers it provides transit to.
+    num_downstreams: ?i64 = null,
+    /// Those AS numbers, ascending, up to 20000.
+    downstreams: ?[]const i64 = null,
+    /// How many registered domains it hosts, and the 10 most popular.
+    hosted_domains: ?AsnHostedDomains = null,
     /// As on `Answer`.
     trial_expired: ?bool = null,
+};
+
+/// From ASN Hosted Domains: how many registered domains the AS hosts, and the
+/// 10 most popular.
+pub const AsnHostedDomains = struct {
+    /// How many registered domains resolve to an address the AS announces.
+    total: i64,
+    /// Up to 10 of them, the most popular first; empty when none does.
+    domains: ?[]const []const u8 = null,
 };
 
 pub const AsnPrefix = struct {

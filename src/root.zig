@@ -55,6 +55,7 @@ pub const AbuseContact = @import("lookup.zig").AbuseContact;
 pub const Answer = @import("lookup.zig").Answer;
 pub const Asn = @import("lookup.zig").Asn;
 pub const AsnAnswer = @import("lookup.zig").AsnAnswer;
+pub const AsnHostedDomains = @import("lookup.zig").AsnHostedDomains;
 pub const AsnLookup = @import("lookup.zig").AsnLookup;
 pub const AsnPrefix = @import("lookup.zig").AsnPrefix;
 pub const BitTorrentDetail = @import("lookup.zig").BitTorrentDetail;
