@@ -79,7 +79,9 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
 
     const vpn = result.value.is_vpn orelse false;
     _ = vpn;
-    if (result.value.is_vpn == null or result.value.location.city == null or result.value.trial_expired == true) {
+    if (result.value.is_vpn == null or result.value.location.city == null or result.value.trial_expired == true or
+        result.value.cap_reached == true)
+    {
         std.debug.print("not in this plan\n", .{});
     }
 

@@ -319,7 +319,7 @@ Retries and how many of them are per call as well as per client:
 const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
-`RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. `RateLimited` carries `Retry-After`, as Unlimited's per-minute limit does, and the library waits and retries it for you. `QuotaExceeded` doesn't: your key's overage cap is reached, raising it in Billing is what helps, and the library never retries it. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
+`RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. `RateLimited` carries `Retry-After`, as Unlimited's per-minute limit does, and the library waits and retries it for you. `QuotaExceeded` doesn't, and the library never retries it. The API itself always sends `Retry-After` with a 429, so that one comes from something in between, such as a proxy; a paid key past its overage cap gets `cap_reached` instead. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
 
 ### Timeouts
 
@@ -391,13 +391,14 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const vpn = result.value.is_vpn orelse false;    // when you only want the flag
 if (result.value.is_vpn == null) { ... }         // on Unlimited: not in your plan
 if (result.value.location.city == null) { ... }  // the same, inside an object every plan answers
 if (result.value.trial_expired == true) { ... }  // a free-plan key's daily trial is spent
+if (result.value.cap_reached == true) { ... }    // a paid key is past its overage cap
 ```
 
 ## Other Libraries

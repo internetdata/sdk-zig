@@ -80,6 +80,10 @@ pub const Answer = struct {
     /// daily trial lasts (every field for the first 100 lookups each UTC day),
     /// true once the answer has Unlimited's.
     trial_expired: ?bool = null,
+    /// On answers to a key on a paid plan only: false while the answer has every
+    /// field, true once its organization's overage cap is reached and the answer
+    /// has Unlimited's. Lookups answered past the cap are not billed.
+    cap_reached: ?bool = null,
 };
 
 /// Dates arrive as `YYYY-MM-DD` strings, or empty, and stay strings: Zig has no
@@ -439,6 +443,8 @@ pub const AsnAnswer = struct {
     hosted_domains: ?AsnHostedDomains = null,
     /// As on `Answer`.
     trial_expired: ?bool = null,
+    /// As on `Answer`.
+    cap_reached: ?bool = null,
 };
 
 /// From ASN Hosted Domains: how many registered domains the AS hosts, and the
@@ -486,6 +492,8 @@ pub const DomainAnswer = struct {
     disposable: ?DisposableDetail = null,
     /// As on `Answer`.
     trial_expired: ?bool = null,
+    /// As on `Answer`.
+    cap_reached: ?bool = null,
 };
 
 pub const DomainDns = struct {
