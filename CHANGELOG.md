@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.14.0 - 2026-11-17
+
+### Features
+
+- Read cap_reached on a paid answer past its overage cap ([`8f664f5`](https://github.com/internetdata/sdk-zig/commit/8f664f517b08be4d17beb2b5c359442c84064679))
+
 ## 2.13.0 - 2026-11-16
 
 ### Features
