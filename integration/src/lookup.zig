@@ -101,10 +101,10 @@ test "a bogon is answered without touching the network" {
     try std.testing.expectEqual(0, rung.proxy.seen().len);
 
     // Computed rather than served, so it carries every member whatever the
-    // plan, but for `trial_expired`, which marks a free-plan key's served
-    // answers and so is always null here.
+    // plan, but for `trial_expired` and `cap_reached`, which mark a free-plan
+    // or paid key's served answers and so are always null here.
     inline for (comptime std.meta.fieldNames(internetdata.Answer)) |name| {
-        const marker = comptime std.mem.eql(u8, name, "trial_expired");
+        const marker = comptime std.mem.eql(u8, name, "trial_expired") or std.mem.eql(u8, name, "cap_reached");
         const value = @field(result.value, name);
         if (comptime @typeInfo(@FieldType(internetdata.Answer, name)) == .optional) {
             if (!marker and value == null) {
