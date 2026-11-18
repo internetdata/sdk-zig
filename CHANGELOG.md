@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.14.1 - 2026-11-18
+
+### Fixes
+
+- Integration: a bogon carries no cap_reached either ([`5a29556`](https://github.com/internetdata/sdk-zig/commit/5a29556bd9db864f252d1e87e3f7ba41113fd859))
+- Re-pin the spec to 2026.11.17 as republished: KEY_OVER_HTTP on the account 403 ([`72cce9e`](https://github.com/internetdata/sdk-zig/commit/72cce9e8ab78c269944e9a9ee73fd5d64a4486f2))
+
 ## 2.14.0 - 2026-11-17
 
 ### Features
