@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.14.2 - 2026-11-19
+
+### Fixes
+
+- Cache a spent trial's or a reached cap's answer for a minute at most ([`11e6a35`](https://github.com/internetdata/sdk-zig/commit/11e6a357be65c0d68360a1ddedc87bf46d3a7fb9))
+
 ## 2.14.1 - 2026-11-18
 
 ### Fixes
