@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, limited per address per minute.
+**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, with no daily or monthly cap.
 
 ```zig
 const std = @import("std");
@@ -321,7 +321,7 @@ Retries and how many of them are per call as well as per client:
 const catalog = try client.database().list(.{ .retries = 4 });
 ```
 
-`RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. `RateLimited` carries `Retry-After`, as Unlimited's per-minute limit does, and the library waits and retries it for you. `QuotaExceeded` doesn't, and the library never retries it. The API itself always sends `Retry-After` with a 429, so that one comes from something in between, such as a proxy; a paid key past its overage cap gets `cap_reached` instead. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
+`RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. `RateLimited` carries `Retry-After`, and the library waits and retries it for you. `QuotaExceeded` doesn't, and the library never retries it. The API itself always sends `Retry-After` with a 429, so that one comes from something in between, such as a proxy; a paid key past its overage cap gets `cap_reached` instead. Nothing else in the 4xx range is retried at all: a misspelled database ID is a 404, and asking for it three times gets the same answer three times.
 
 ### Timeouts
 
