@@ -166,6 +166,8 @@ var client = try internetdata.Client.init(gpa, io, .{
 var uncached = try internetdata.Client.init(gpa, io, .{ .cache = null });
 ```
 
+An answer with `trial_expired` or `cap_reached` true is cached for a minute at most, so a new day's trial or a raised cap reaches you within a minute.
+
 Nothing else is cached. What your organization may download depends on the key, so a listing held from one client is not an answer for another.
 
 ### Private and reserved addresses
