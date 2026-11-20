@@ -113,7 +113,7 @@ std.debug.print("{s}\n", .{acct.value.plan.name});       // Max, the name to sho
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
-Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on the free plan; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against its trial on the free plan; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
 
 Both are yours to free, like everything else the client hands back. `myIpWith` and `myEntitlementWith` take this call's own retry budget and a `Diagnostics`.
 

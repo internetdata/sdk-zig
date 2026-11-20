@@ -77,8 +77,7 @@ pub const Answer = struct {
     rwhois: ?Rwhois = null,
     hosted_domains: ?HostedDomains = null,
     /// On answers to a key on the free plan only: false while its organization's
-    /// daily trial lasts (every field for the first 100 lookups each UTC day),
-    /// true once the answer has Unlimited's.
+    /// trial of every field lasts, true once the answer has Unlimited's.
     trial_expired: ?bool = null,
     /// On answers to a key on a paid plan only: false while the answer has every
     /// field, true once its organization's overage cap is reached and the answer

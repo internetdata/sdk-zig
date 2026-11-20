@@ -5,8 +5,8 @@
 //! the spec requires are always there; a member a plan leaves out is ABSENT
 //! rather than false or zero, inside a shared object too; and a field the
 //! key's answer serves that the keyless one does not is null in the keyless
-//! result. The suite's key is on the free plan, whose first 100 lookups of a UTC
-//! day answer every field and the rest Unlimited's, so which half a run sees is
+//! result. The suite's key is on the free plan, whose trial answers every field
+//! and the rest Unlimited's, so which half a run sees is
 //! read off `trial_expired` rather than assumed.
 
 const std = @import("std");
@@ -159,8 +159,8 @@ test "the key reaches the wire, and its answer says which half of the trial it i
         std.debug.print("a free-plan key's answer carries no trial_expired\n", .{});
         return error.TestExpectedEqual;
     };
-    // The organization's first 100 lookups of the UTC day are answered in full,
-    // and the rest as Unlimited's: which half a run sees depends on the day.
+    // The organization's trial is answered in full, and the rest as
+    // Unlimited's: which half a run sees depends on the trial.
     try std.testing.expectEqual(!expired, result.value.is_vpn != null);
     try std.testing.expectEqual(!expired, result.value.location.city != null);
     try expectServedAsDecoded(gpa, result.raw, result.value);

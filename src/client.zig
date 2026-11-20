@@ -36,8 +36,8 @@ pub const CacheOptions = struct {
 };
 
 pub const Options = struct {
-    /// Without one a lookup is on Unlimited, the free plan, limited per address
-    /// per minute: the flags and detail every plan answers, `location`, `asn`,
+    /// Without one a lookup is on Unlimited, the free plan, with no daily or
+    /// monthly cap: the flags and detail every plan answers, `location`, `asn`,
     /// `company` and `abuse`. A batch needs a key on a paid plan, and the
     /// database calls one carrying the `db.download` scope; a client built
     /// without one sends no `Authorization` header at all, rather than refusing
@@ -435,7 +435,7 @@ pub const Client = struct {
     ///
     /// Usage counts against the ALLOWANCE WINDOW - on a paid plan the
     /// anniversary of the subscription, not the calendar month and not the
-    /// billing period, and on the free plan the UTC day - and it is the same
+    /// billing period, and on the free plan its trial - and it is the same
     /// number a lookup is gated on.
     ///
     /// Deliberately NOT cached: the whole point is what has been spent, and a

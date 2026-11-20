@@ -3,7 +3,7 @@
 //! domain, and the licensed databases themselves, downloaded as CSV.GZ or MMDB.
 //!
 //! Start with `Client.init` and `Client.lookup`. No API key is needed: without
-//! one a lookup is on Unlimited, the free plan, limited per address per minute.
+//! one a lookup is on Unlimited, the free plan, with no daily or monthly cap.
 //! A batch needs a paid plan, and `Client.database()` a key carrying the
 //! `db.download` scope. `Client.oauth()` signs a person in, and never needs a
 //! key.
