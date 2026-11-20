@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 /// `null` is "not in your plan", `false` is "checked, and no". This is the
 /// single most important semantic in the library, and it is why every
 /// tier-gated flag is a `?bool` rather than a `bool`, and every paid member of
-/// a shared object (`location.city`, `asn.rpki_status`) an optional too.
+/// a shared object (`location.city`, `company.type`) an optional too.
 /// `orelse` is the reader for callers who only want to know whether an address
 /// is flagged:
 ///

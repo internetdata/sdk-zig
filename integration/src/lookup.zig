@@ -266,8 +266,6 @@ fn expectKeylessLookup(answer: internetdata.Answer) !void {
     inline for (paid_location) |name| {
         try expectAbsent("location." ++ name, @field(answer.location, name));
     }
-    try expectAbsent("asn.country", answer.asn.country);
-    try expectAbsent("asn.rpki_status", answer.asn.rpki_status);
     try expectAbsent("company.type", answer.company.type);
     try expectAbsent("company.country", answer.company.country);
     inline for (.{ "name", "phone", "address", "country", "network", "validated", "unvalidated_since" }) |name| {
