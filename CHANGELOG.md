@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.15.0 - 2026-11-20
+
+### Features
+
+- Read a paid domain answer's hosting, co-hosted domains, home page, redirects and backlinks ([`c804fa8`](https://github.com/internetdata/sdk-zig/commit/c804fa8a8e45441a45e8022bb860fe255a6501fd))
+
 ## 2.14.3 - 2026-11-20
 
 ### Fixes
