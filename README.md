@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag, the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field, 100 lookups a day. Create a key in the [console](https://app.internetdata.io), then pass it in:
+Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag, the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
 
 ```zig
 var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
@@ -166,7 +166,7 @@ var client = try internetdata.Client.init(gpa, io, .{
 var uncached = try internetdata.Client.init(gpa, io, .{ .cache = null });
 ```
 
-An answer with `trial_expired` or `cap_reached` true is cached for a minute at most, so a new day's trial or a raised cap reaches you within a minute.
+An answer with `trial_expired` or `cap_reached` true is cached for a minute at most, so a renewed trial or a raised cap reaches you within a minute.
 
 Nothing else is cached. What your organization may download depends on the key, so a listing held from one client is not an answer for another.
 
@@ -393,13 +393,13 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const vpn = result.value.is_vpn orelse false;    // when you only want the flag
 if (result.value.is_vpn == null) { ... }         // on Unlimited: not in your plan
 if (result.value.location.city == null) { ... }  // the same, inside an object every plan answers
-if (result.value.trial_expired == true) { ... }  // a free-plan key's daily trial is spent
+if (result.value.trial_expired == true) { ... }  // a free-plan key's trial is spent
 if (result.value.cap_reached == true) { ... }    // a paid key is past its overage cap
 ```
 
