@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.14.3 - 2026-11-20
+
+### Fixes
+
+- Re-pin the spec to 2026.11.20: the free trial without a count or period ([`b60272c`](https://github.com/internetdata/sdk-zig/commit/b60272c655eba1474b021911b0ac2ae2be64c93c))
+
 ## 2.14.2 - 2026-11-19
 
 ### Fixes
