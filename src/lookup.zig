@@ -485,10 +485,21 @@ pub const DomainAnswer = struct {
     has_cname: bool,
     /// The records themselves, up to 100 a type.
     dns: ?DomainDns = null,
+    /// The network announcing each address in `dns.a` and then `dns.aaaa`;
+    /// empty where it resolves to none.
+    hosting: ?[]const DomainHost = null,
+    /// The other registered domains on its first IPv4 address.
+    cohosted_domains: ?CohostedDomains = null,
     /// The organization's IP ranges.
     ip_ranges: ?DomainIpRanges = null,
     /// Empty when `is_disposable` is false.
     disposable: ?DisposableDetail = null,
+    /// What our crawl last read of its own home page.
+    web: ?DomainWeb = null,
+    /// The registered domains whose home page redirects to it.
+    redirects: ?DomainRedirects = null,
+    /// The registered domains whose home page links to it.
+    backlinks: ?DomainBacklinks = null,
     /// As on `Answer`.
     trial_expired: ?bool = null,
     /// As on `Answer`.
@@ -522,6 +533,61 @@ pub const DnsNsRecord = struct {
 pub const DnsCnameRecord = struct {
     target: []const u8,
     last_seen: []const u8,
+};
+
+/// An address the domain resolves to and the network announcing it.
+pub const DomainHost = struct {
+    ip: []const u8,
+    /// As an address lookup's `asn`, every member empty where none is known.
+    asn: Asn,
+};
+
+/// The other registered domains on the domain's first IPv4 address.
+pub const CohostedDomains = struct {
+    /// The domain's first IPv4 address, empty where it has none.
+    ip: []const u8,
+    /// How many other registered domains resolve to it.
+    total: i64,
+    /// Up to 10 of them, the most popular first, the domain itself left out.
+    domains: []const []const u8,
+};
+
+/// What our crawl last read of the domain's own home page, every member empty
+/// where it holds none.
+pub const DomainWeb = struct {
+    /// The URL of the home page read.
+    url: []const u8,
+    /// An English page's title.
+    title: []const u8,
+    /// An English page's description.
+    description: []const u8,
+    /// The day it was last read.
+    last_seen: []const u8,
+    links: DomainWebLinks,
+};
+
+/// The external hosts the home page links to.
+pub const DomainWebLinks = struct {
+    /// How many.
+    total: i64,
+    /// Up to 10 of them.
+    hosts: []const []const u8,
+};
+
+/// The registered domains whose home page redirects to the domain.
+pub const DomainRedirects = struct {
+    /// How many.
+    total: i64,
+    /// Up to 10 of them, the most popular first.
+    domains: []const []const u8,
+};
+
+/// The registered domains whose home page links to the domain.
+pub const DomainBacklinks = struct {
+    /// How many.
+    total: i64,
+    /// Up to 10 of them, the most popular first.
+    domains: []const []const u8,
 };
 
 pub const DomainIpRanges = struct {

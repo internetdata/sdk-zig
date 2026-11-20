@@ -1613,8 +1613,14 @@ const domain_ok =
     \\{"domain":"example.com","is_registered":true,"has_a":true,"has_aaaa":false,"has_mx":true,"has_ns":true,
     \\"has_cname":false,"dns":{"a":[{"ip":"192.0.2.10","last_seen":"2026-11-08"}],"aaaa":[],
     \\"mx":[{"priority":10,"host":"m","last_seen":"2026-11-08"}],"ns":[],"cname":[]},
+    \\"hosting":[{"ip":"192.0.2.10","asn":{"asn":64496,"name":"EXAMPLE-AS","domain":"example.net","type":"hosting",
+    \\"prefix":"192.0.2.0/24","country":"US","rpki_status":"valid"}}],
+    \\"cohosted_domains":{"ip":"192.0.2.10","total":3,"domains":["example.net"]},
     \\"ip_ranges":{"domain":"example.com","redirects_to":"","total":1,"ipv4":256,
-    \\"ranges":[{"range":"192.0.2.0/24","name":"N","country":"US"}]}}
+    \\"ranges":[{"range":"192.0.2.0/24","name":"N","country":"US"}]},
+    \\"web":{"url":"https://example.com/","title":"Example Domain","description":"","last_seen":"2026-11-18",
+    \\"links":{"total":1,"hosts":["www.iana.org"]}},"redirects":{"total":2,"domains":["example.org"]},
+    \\"backlinks":{"total":7,"domains":["docs.example"]}}
 ;
 const entitlement_ok =
     \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","name":"Max","tier":"max"},
@@ -1654,6 +1660,15 @@ const wrong_answers = [_]Case{
     .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"has_a\":true", .to = "\"has_a\":true,\"cap_reached\":\"false\"" },
     .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"has_mx\":true,", .to = "" },
     .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"aaaa\":[],", .to = "" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"asn\":64496", .to = "\"asn\":\"64496\"" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"prefix\":\"192.0.2.0/24\",", .to = "" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"hosting\":[{", .to = "\"hosting\":[null,{" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"total\":3", .to = "\"total\":\"3\"" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "[\"example.net\"]", .to = "[null]" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"last_seen\":\"2026-11-18\",", .to = "" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "[\"www.iana.org\"]", .to = "\"www.iana.org\"" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = "\"total\":2", .to = "\"total\":null" },
+    .{ .path = "/domain/example.com", .body = domain_ok, .from = ",\"domains\":[\"docs.example\"]", .to = "" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"requests\":1", .to = "\"requests\":\"1\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"x\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-10-01T24:00:00Z\"" },
@@ -1698,6 +1713,52 @@ fn lookupCall(client: *internetdata.Client, path: []const u8, diag: *internetdat
         client.gpa.free(url);
     } else unreachable;
     return null;
+}
+
+test "a paid domain answer reads its hosting, co-hosted domains, home page, redirects and backlinks" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/domain/example.com", .ok(domain_ok));
+    try harness.stub.route("/domain/example.org", .ok(
+        \\{"domain":"example.org","is_registered":true,"has_a":true,"has_aaaa":false,"has_mx":false,"has_ns":true,
+        \\"has_cname":false}
+    ));
+    var client = try harness.client(.{});
+    defer client.deinit();
+
+    const paid = try client.lookupDomain("example.com");
+    defer paid.deinit();
+    const hosting = paid.value.hosting.?;
+    try std.testing.expectEqual(1, hosting.len);
+    try std.testing.expectEqualStrings("192.0.2.10", hosting[0].ip);
+    try std.testing.expectEqual(64496, hosting[0].asn.asn);
+    try std.testing.expectEqualStrings("192.0.2.0/24", hosting[0].asn.prefix);
+    try std.testing.expectEqualStrings("valid", hosting[0].asn.rpki_status.?);
+    const cohosted = paid.value.cohosted_domains.?;
+    try std.testing.expectEqualStrings("192.0.2.10", cohosted.ip);
+    try std.testing.expectEqual(3, cohosted.total);
+    try std.testing.expectEqualStrings("example.net", cohosted.domains[0]);
+    const web = paid.value.web.?;
+    try std.testing.expectEqualStrings("https://example.com/", web.url);
+    try std.testing.expectEqualStrings("Example Domain", web.title);
+    try std.testing.expectEqualStrings("", web.description);
+    try std.testing.expectEqualStrings("2026-11-18", web.last_seen);
+    try std.testing.expectEqual(1, web.links.total);
+    try std.testing.expectEqualStrings("www.iana.org", web.links.hosts[0]);
+    try std.testing.expectEqual(2, paid.value.redirects.?.total);
+    try std.testing.expectEqualStrings("example.org", paid.value.redirects.?.domains[0]);
+    try std.testing.expectEqual(7, paid.value.backlinks.?.total);
+    try std.testing.expectEqualStrings("docs.example", paid.value.backlinks.?.domains[0]);
+
+    // Unlimited's answer leaves all five out, and absent stays absent.
+    const unlimited = try client.lookupDomain("example.org");
+    defer unlimited.deinit();
+    try std.testing.expect(unlimited.value.hosting == null);
+    try std.testing.expect(unlimited.value.cohosted_domains == null);
+    try std.testing.expect(unlimited.value.web == null);
+    try std.testing.expect(unlimited.value.redirects == null);
+    try std.testing.expect(unlimited.value.backlinks == null);
 }
 
 test "a lookup answer with a member of the wrong type or missing, or a malformed date, is retried" {

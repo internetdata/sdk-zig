@@ -89,7 +89,7 @@ defer domain.deinit();
 std.debug.print("{}\n", .{domain.value.has_mx});
 ```
 
-Both answer on every plan, and a paid one adds an AS's Whois record, the prefixes it announces with their RPKI status, its rank, Tier 1 flag, upstreams, peers and downstreams and the domains it hosts, and a domain's DNS records, its organization's IP ranges and whether it's a disposable email domain. Neither is cached or batched. `lookupAsnWith` and `lookupDomainWith` take a call's own options. `lookup` takes an IP address alone, and fails anything else with `BadRequest` before sending it.
+Both answer on every plan, and a paid one adds an AS's Whois record, the prefixes it announces with their RPKI status, its rank, Tier 1 flag, upstreams, peers and downstreams and the domains it hosts, and a domain's DNS records, the network announcing each of its addresses, the other domains on its first IPv4 address, its organization's IP ranges, whether it's a disposable email domain, what its home page says and links to, and the domains whose home page redirects or links to it. Neither is cached or batched. `lookupAsnWith` and `lookupDomainWith` take a call's own options. `lookup` takes an IP address alone, and fails anything else with `BadRequest` before sending it.
 
 ### Your own address
 

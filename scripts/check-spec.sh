@@ -52,7 +52,8 @@ for schema in (
     "ClassDetail", "ProxyDetail", "PubproxyDetail", "CarrierDetail", "SatelliteDetail", "SshDetail",
     "SmtpDetail", "WebDetail", "DnsResolverDetail", "BitTorrentDetail", "Location", "Asn", "Company",
     "AbuseContact", "Whois", "Rwhois", "HostedDomains", "AsnPrefix", "DomainDns", "DnsAddressRecord",
-    "DnsMxRecord", "DnsNsRecord", "DnsCnameRecord", "DomainIpRanges", "DomainIpRange", "DisposableDetail",
+    "DnsMxRecord", "DnsNsRecord", "DnsCnameRecord", "DomainHost", "CohostedDomains", "DomainIpRanges",
+    "DomainIpRange", "DisposableDetail", "DomainWeb", "DomainWebLinks", "DomainRedirects", "DomainBacklinks",
 ):
     PAIRS[schema] = (schema, "src/lookup.zig")
 for schema in ("Entitlement", "EntitlementApikey", "EntitlementPlan", "EntitlementUsage"):
