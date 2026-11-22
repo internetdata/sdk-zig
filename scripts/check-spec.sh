@@ -16,7 +16,11 @@
 # Optionality is read the way the model spells it: a Zig field with a default is
 # optional, one without is required, and a nullable property has to be an
 # optional type, with a default or without, since it still has to parse when it
-# arrives as null.
+# arrives as null. The one exception is a member the spec made required after a
+# caller could already write the struct out: it keeps its default, so that
+# caller's struct literal still builds until a major, and counts as required
+# here only while a `.required = true` row in src/strict.zig makes the decoder
+# refuse an answer without it.
 
 set -euo pipefail
 
@@ -54,6 +58,7 @@ for schema in (
     "AbuseContact", "Whois", "Rwhois", "HostedDomains", "AsnPrefix", "DomainDns", "DnsAddressRecord",
     "DnsMxRecord", "DnsNsRecord", "DnsCnameRecord", "DomainHost", "CohostedDomains", "DomainIpRanges",
     "DomainIpRange", "DisposableDetail", "DomainWeb", "DomainWebLinks", "DomainRedirects", "DomainBacklinks",
+    "BotDetail", "UserAgentVerdict",
 ):
     PAIRS[schema] = (schema, "src/lookup.zig")
 for schema in ("Entitlement", "EntitlementApikey", "EntitlementPlan", "EntitlementUsage"):
@@ -94,7 +99,18 @@ def spec_members(lines, schema):
     }
 
 
-def model_members(lines, struct, schema):
+# (<file>, <struct>, <member>) for every member src/strict.zig's table requires
+# on the wire though its struct gives it a default.
+def wire_required():
+    rows = set()
+    for line in open("src/strict.zig"):
+        row = re.match(r'^\s*\.\{ \.T = ([a-z_]+)\.([A-Za-z]+), \.name = "([a-z0-9_]+)",(.*)\},', line)
+        if row and ".required = true" in row.group(4):
+            rows.add((f"src/{row.group(1)}.zig", row.group(2), row.group(3)))
+    return rows
+
+
+def model_members(lines, struct, schema, model_path):
     members = set()
     inside = False
     for line in lines:
@@ -108,6 +124,8 @@ def model_members(lines, struct, schema):
         field = re.match(r'^    ([a-z0-9_@"]+): (\??)', line)
         if field:
             name, optional_type, defaulted = field.group(1).strip('@"'), field.group(2) == "?", " = " in line
+            if defaulted and (model_path, struct, name) in required_on_wire:
+                defaulted = False
             members.add((name, model_kind(schema, name, optional_type, defaulted)))
     return members
 
@@ -125,6 +143,7 @@ def render(members):
 
 
 spec = open(spec_path).readlines()
+required_on_wire = wire_required()
 models = {}
 spec_kinds = {}
 for schema in PAIRS:
@@ -134,7 +153,7 @@ failed = False
 for schema, (struct, model_path) in PAIRS.items():
     if model_path not in models:
         models[model_path] = open(model_path).readlines()
-    want, got = spec_members(spec, schema), model_members(models[model_path], struct, schema)
+    want, got = spec_members(spec, schema), model_members(models[model_path], struct, schema, model_path)
     if not want:
         print(f"  FAIL {schema} -> {struct}: no such schema in {spec_path}", file=sys.stderr)
         failed = True

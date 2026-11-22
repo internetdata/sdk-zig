@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, with no daily or monthly cap.
+**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, `is_bot` among them, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, with no daily or monthly cap.
 
 ```zig
 const std = @import("std");
@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag, the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
+Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
 
 ```zig
 var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
@@ -393,7 +393,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's, `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's (`bot` among it), `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const vpn = result.value.is_vpn orelse false;    // when you only want the flag

@@ -102,9 +102,11 @@ test "a bogon is answered without touching the network" {
 
     // Computed rather than served, so it carries every member whatever the
     // plan, but for `trial_expired` and `cap_reached`, which mark a free-plan
-    // or paid key's served answers and so are always null here.
+    // or paid key's served answers, and `user_agent`, the verdict on a user
+    // agent sent with a lookup, so all three are always null here.
     inline for (comptime std.meta.fieldNames(internetdata.Answer)) |name| {
-        const marker = comptime std.mem.eql(u8, name, "trial_expired") or std.mem.eql(u8, name, "cap_reached");
+        const marker = comptime std.mem.eql(u8, name, "trial_expired") or std.mem.eql(u8, name, "cap_reached") or
+            std.mem.eql(u8, name, "user_agent");
         const value = @field(result.value, name);
         if (comptime @typeInfo(@FieldType(internetdata.Answer, name)) == .optional) {
             if (!marker and value == null) {
@@ -261,6 +263,8 @@ fn expectKeylessLookup(answer: internetdata.Answer) !void {
     }) |name| {
         try expectAbsent(name, @field(answer, name));
     }
+    // From 2.16.0; the range still admits releases without it.
+    if (comptime @hasField(internetdata.Answer, "bot")) try expectAbsent("bot", answer.bot);
     const paid_location = .{ "region", "region_code", "city", "postal_code", "latitude", "longitude" } ++
         .{ "accuracy_radius", "geoname_id", "dma_code", "last_changed" };
     inline for (paid_location) |name| {

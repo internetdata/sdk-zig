@@ -1586,7 +1586,7 @@ test "myEntitlement surfaces an unauthorized key" {
 // spec requires that is missing: each is an answer the call cannot read, so it
 // is retried like a 5xx and carries its status, as a body that is not JSON is.
 const lookup_ok =
-    \\{"ip":"1.1.1.1","is_bogon":false,"is_vpn":true,"is_tor":false,"is_relay":false,"is_dcproxy":true,
+    \\{"ip":"1.1.1.1","is_bogon":false,"is_vpn":true,"is_tor":false,"is_relay":false,"is_dcproxy":true,"is_bot":false,
     \\"is_pubproxy":true,"is_anycast":false,"is_carrier":false,"is_satellite":false,"is_ssh":false,"is_smtp":false,
     \\"is_web":true,"is_dns_resolver":false,"is_bittorrent":false,
     \\"vpn":{"provider":"p","provider_name":"P","confidence":"high","last_seen":"2026-10-20"},"tor":{},"relay":{},
@@ -1600,7 +1600,8 @@ const lookup_ok =
     \\"location":{"continent":"OC","continent_name":"Oceania","country":"AU","country_name":"Australia",
     \\"timezone":"Australia/Brisbane","currency_code":"AUD","currency_name":"Dollar","currency_symbol":"A$",
     \\"flag_emoji":"","flag_unicode":"U+1F1E6 U+1F1FA","latitude":-27.5,"accuracy_radius":20},
-    \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p"},"company":{"name":"c","domain":"d"},
+    \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p","country":"NL","rpki_status":"valid"},
+    \\"company":{"name":"c","domain":"d"},
     \\"hostname":"h","abuse":{"email":"a"},
     \\"whois":{"id":"","name":"","org":"","country":"","status":"","source":"","domain":"","abuse_email":"","asn":13335}}
 ;
@@ -1646,6 +1647,10 @@ const wrong_answers = [_]Case{
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_tor\":false,", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"AU\",", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"title\":\"\",", .to = "" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_bot\":false,", .to = "" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"NL\",", .to = "" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"is_bot\":false,", .to = "\"is_bot\":null," },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"company\":{\"name\":\"c\",\"domain\":\"d\"},", .to = "" },
     .{ .path = "/asn/9009", .body = asn_ok, .from = "\"num_ips\":3", .to = "\"num_ips\":\"3\"" },

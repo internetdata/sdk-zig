@@ -41,6 +41,12 @@ pub const Answer = struct {
     is_pubproxy: ?bool = null,
     is_hosting: ?bool = null,
     is_cdn: ?bool = null,
+    /// Bot IP, on every plan: an automated client's address, such as a search
+    /// engine's or an AI company's crawler, an uptime monitor, an internet
+    /// scanner or a webhook sender. `bot` says whose. Every served answer
+    /// carries it; the default only keeps a struct literal written before it
+    /// building.
+    is_bot: bool = false,
     is_anycast: bool,
     is_carrier: bool,
     is_satellite: bool,
@@ -58,6 +64,9 @@ pub const Answer = struct {
     pubproxy: ?PubproxyDetail = null,
     hosting: ?ClassDetail = null,
     cdn: ?ClassDetail = null,
+    /// Whose bot uses the address, on paid plans and the trial; empty when
+    /// `is_bot` is false.
+    bot: ?BotDetail = null,
     carrier: ?CarrierDetail = null,
     satellite: ?SatelliteDetail = null,
     ssh: ?SshDetail = null,
@@ -76,6 +85,9 @@ pub const Answer = struct {
     whois: ?Whois = null,
     rwhois: ?Rwhois = null,
     hosted_domains: ?HostedDomains = null,
+    /// The verdict on a `User-Agent` sent with the lookup. This version sends
+    /// none, so it stays null.
+    user_agent: ?UserAgentVerdict = null,
     /// On answers to a key on the free plan only: false while its organization's
     /// trial of every field lasts, true once the answer has Unlimited's.
     trial_expired: ?bool = null,
@@ -123,6 +135,45 @@ pub const PubproxyDetail = struct {
     num_proxies: ?i64 = null,
     last_seen: ?[]const u8 = null,
     last_usable: ?[]const u8 = null,
+};
+
+/// The bot operator whose bot uses the address, and what its bots do. Dates
+/// are `YYYY-MM-DD`.
+pub const BotDetail = struct {
+    /// The operator's ID in Bot Provider, empty where no operator is known.
+    provider: ?[]const u8 = null,
+    provider_name: ?[]const u8 = null,
+    /// The bots the address serves, as their user agents name them
+    /// (`Googlebot`, `GPTBot`); for an address that is not verified, the bots
+    /// it claimed to be. Empty when none is named.
+    agents: ?[]const []const u8 = null,
+    /// What those bots do, e.g. `search_engine` or `ai_training`; empty where
+    /// unknown.
+    categories: ?[]const []const u8 = null,
+    /// Whether the operator vouches for the address, so the bots in `agents`
+    /// really are its.
+    verified: ?bool = null,
+    /// `verified`, `declared`, `spoofed` or `undeclared`.
+    identity: ?[]const u8 = null,
+    /// `list`, `rdns` or `owner` for a verified address; empty otherwise.
+    verified_by: ?[]const u8 = null,
+    /// `high`, `medium` or `low`.
+    confidence: ?[]const u8 = null,
+    first_seen: ?[]const u8 = null,
+    last_seen: ?[]const u8 = null,
+};
+
+/// The agent a `User-Agent` names, and whether the address bears it out.
+pub const UserAgentVerdict = struct {
+    /// The agent named, such as `Googlebot` or `Chrome`; `Unknown` where it
+    /// names none.
+    agent: []const u8,
+    /// `browser`, `inapp`, `automation`, `bot`, `ai-bot`, `http-client` or
+    /// `unknown`.
+    kind: []const u8,
+    /// `verified`, `spoofed`, `unverifiable` or `not_bot`, kept a string so a
+    /// value added later does not fail the answer.
+    verdict: []const u8,
 };
 
 /// The mobile carrier whose address space holds the address.
@@ -667,7 +718,8 @@ pub fn parseServed(comptime T: type, gpa: Allocator, body: []const u8) ParseErro
 /// every flag present and false, every detail object present and empty, `web`
 /// empty, and location, AS, company, abuse contact and both registry records
 /// with every member empty, `hostname` empty and `hosted_domains` 0 with no
-/// domains.
+/// domains. `user_agent`, `trial_expired` and `cap_reached` describe a served
+/// answer, so they stay null.
 ///
 /// This is deliberately the WIDEST shape regardless of your plan, so a caller
 /// must not infer which fields their plan includes from a bogon answer.
@@ -687,6 +739,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .is_pubproxy = false,
         .is_hosting = false,
         .is_cdn = false,
+        .is_bot = false,
         .is_anycast = false,
         .is_carrier = false,
         .is_satellite = false,
@@ -704,6 +757,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .pubproxy = .{},
         .hosting = .{},
         .cdn = .{},
+        .bot = .{},
         .carrier = .{},
         .satellite = .{},
         .ssh = .{},
@@ -733,13 +787,13 @@ fn empty(comptime T: type, gpa: Allocator) Allocator.Error!Served(T) {
 /// The members every plan answers, and nothing else: Unlimited's shape with no
 /// country and no announcement.
 const unlimited =
-    \\{"ip":"1.1.1.1","is_bogon":false,"is_tor":false,"is_relay":false,"is_anycast":false,
+    \\{"ip":"1.1.1.1","is_bogon":false,"is_tor":false,"is_relay":false,"is_bot":false,"is_anycast":false,
     \\"is_carrier":false,"is_satellite":false,"is_ssh":false,"is_smtp":false,"is_web":false,
     \\"is_dns_resolver":false,"is_bittorrent":false,"tor":{},"relay":{},
     \\"location":{"continent":"","continent_name":"","country":"","country_name":"","timezone":"",
     \\"currency_code":"","currency_name":"","currency_symbol":"","flag_emoji":"","flag_unicode":""},
-    \\"asn":{"asn":0,"name":"","domain":"","type":"","prefix":""},"company":{"name":"","domain":""},
-    \\"hostname":"","abuse":{"email":""}
+    \\"asn":{"asn":0,"name":"","domain":"","type":"","prefix":"","country":"","rpki_status":""},
+    \\"company":{"name":"","domain":""},"hostname":"","abuse":{"email":""}
 ;
 
 fn withMember(comptime member: []const u8) []const u8 {
@@ -754,7 +808,7 @@ test "an absent flag is null and a served false flag is false" {
     try std.testing.expectEqual(@as(?bool, null), free_tier.value.is_hosting);
     try std.testing.expectEqual(false, free_tier.value.is_hosting orelse false);
     try std.testing.expectEqual(@as(?[]const u8, null), free_tier.value.location.city);
-    try std.testing.expectEqual(@as(?[]const u8, null), free_tier.value.asn.rpki_status);
+    try std.testing.expectEqualStrings("", free_tier.value.asn.rpki_status.?);
 
     const served = try parseServed(Answer, std.testing.allocator, withMember("\"is_hosting\":false"));
     defer served.deinit();
@@ -789,4 +843,48 @@ test "a body missing a required member is malformed" {
         error.Malformed,
         parseServed(DomainAnswer, std.testing.allocator, "{\"domain\":\"example.com\"}"),
     );
+}
+
+test "a required member a struct literal may leave out is still required on the wire" {
+    const gpa = std.testing.allocator;
+    const cases = [_]struct { from: []const u8, to: []const u8 }{
+        .{ .from = "\"is_bot\":false,", .to = "" },
+        .{ .from = "\"is_bot\":false,", .to = "\"is_bot\":null," },
+        .{ .from = "\"prefix\":\"\",\"country\":\"\"", .to = "\"prefix\":\"\"" },
+        .{ .from = "\"prefix\":\"\",\"country\":\"\"", .to = "\"prefix\":\"\",\"country\":null" },
+        .{ .from = ",\"rpki_status\":\"\"", .to = "" },
+        .{ .from = ",\"rpki_status\":\"\"", .to = ",\"rpki_status\":null" },
+    };
+    for (cases) |case| {
+        const body = try std.mem.replaceOwned(u8, gpa, unlimited ++ "}", case.from, case.to);
+        defer gpa.free(body);
+        try std.testing.expect(!std.mem.eql(u8, body, unlimited ++ "}"));
+        const read = parseServed(Answer, gpa, body) catch |err| {
+            try std.testing.expectEqual(error.Malformed, err);
+            continue;
+        };
+        read.deinit();
+        std.debug.print("read without refusing: {s}\n", .{body});
+        return error.TestExpectedError;
+    }
+}
+
+test "is_bot and a paid answer's bot are read" {
+    const free = try parseServed(Answer, std.testing.allocator, unlimited ++ "}");
+    defer free.deinit();
+    try std.testing.expectEqual(false, free.value.is_bot);
+    try std.testing.expect(free.value.bot == null);
+
+    const paid = try parseServed(Answer, std.testing.allocator, withMember(
+        \\"bot":{"provider":"google","provider_name":"Google","agents":["Googlebot"],"categories":["search_engine"],
+        \\"verified":true,"identity":"verified","verified_by":"list","confidence":"high","first_seen":"2026-11-21",
+        \\"last_seen":"2026-11-21"}
+    ));
+    defer paid.deinit();
+    const bot = paid.value.bot.?;
+    try std.testing.expectEqualStrings("google", bot.provider.?);
+    try std.testing.expectEqualStrings("Googlebot", bot.agents.?[0]);
+    try std.testing.expectEqualStrings("search_engine", bot.categories.?[0]);
+    try std.testing.expectEqual(@as(?bool, true), bot.verified);
+    try std.testing.expectEqualStrings("list", bot.verified_by.?);
 }
