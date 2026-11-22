@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.16.0 - 2026-11-22
+
+### Features
+
+- Read whether a bot uses an address, and whose: is_bot and bot ([`1140abe`](https://github.com/internetdata/sdk-zig/commit/1140abead8e946faef715079d5a5fca64bd9eaa2))
+
+### Fixes
+
+- Comments: the free plan counts its trial by the UTC month ([`8dbc3fd`](https://github.com/internetdata/sdk-zig/commit/8dbc3fd9103770014ebc82dd92721c1336e6f32c))
+
 ## 2.15.0 - 2026-11-20
 
 ### Features
