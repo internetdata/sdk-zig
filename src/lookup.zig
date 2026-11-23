@@ -140,8 +140,11 @@ pub const PubproxyDetail = struct {
 /// The bot operator whose bot uses the address, and what its bots do. Dates
 /// are `YYYY-MM-DD`.
 pub const BotDetail = struct {
-    /// The operator's ID in Bot Provider, empty where no operator is known.
+    /// The bot operator's ID in Bot Provider; for an address that is not
+    /// verified, the operator its claim named. Empty where no operator is known.
     provider: ?[]const u8 = null,
+    /// The operator's name, the one its claim named for an address that is not
+    /// verified; empty where no operator is known.
     provider_name: ?[]const u8 = null,
     /// The bots the address serves, as their user agents name them
     /// (`Googlebot`, `GPTBot`); for an address that is not verified, the bots
