@@ -86,6 +86,43 @@ test "the API key reaches the wire as a bearer token" {
     try std.testing.expect(std.mem.startsWith(u8, harness.stub.lastUserAgent(), "internetdata-zig/"));
 }
 
+// Every request names the SDK, OAuth's and object storage's transfer included,
+// each with the same version: a request built apart from the rest would send
+// `std.http.Client`'s own `zig/<version> (std.http)` instead.
+test "every request names the SDK, OAuth's and the transfer's included" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.routeLookup("45.83.91.1");
+    try harness.stub.route("/api/v2/database/list", .ok("{\"databases\":[]}"));
+    try harness.stub.route("/.well-known/oauth-authorization-server", .{ .status = 500 });
+    try harness.stub.route("/oauth/device_authorization", .{ .status = 500 });
+    try support.routeDownload(harness, .{ .status = 500 });
+
+    var client = try harness.client(.{ .api_key = "mk_test_1234", .retries = 0 });
+    defer client.deinit();
+    (try client.lookup("45.83.91.1")).deinit();
+    var batch = try client.lookupBatch(&.{"45.83.91.2"}, .{});
+    batch.deinit();
+    (try client.database().list(.{})).deinit();
+    try std.testing.expectError(error.ServerError, client.oauth().metadata(.{}));
+    try std.testing.expectError(error.ServerError, client.oauth().deviceAuthorization("cid", .{}));
+    try std.testing.expectError(error.ServerError, client.database().downloadBytes("bogon_ip_v1", .csvgz, .{}));
+
+    const calls = harness.stub.seen();
+    try std.testing.expectEqual(7, calls.len);
+    try std.testing.expectEqualStrings(storage_path, calls[6].path);
+    const first = calls[0].header("user-agent").?;
+    try std.testing.expect(std.mem.startsWith(u8, first, "internetdata-zig/"));
+    try std.testing.expect(first.len > "internetdata-zig/".len);
+    for (calls) |call| {
+        std.testing.expectEqualStrings(first, call.header("user-agent") orelse "") catch |err| {
+            std.debug.print("{s} {s}\n", .{ call.method, call.target });
+            return err;
+        };
+    }
+}
+
 // Today every endpoint is licensed, so a keyless client only ever gets a 401.
 // It still has to BUILD and to send no credential at all: an empty key is what a
 // missing CI secret interpolates to, and `Bearer ` is a worse answer than none.

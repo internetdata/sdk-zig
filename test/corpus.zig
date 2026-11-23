@@ -29,6 +29,7 @@ pub const Corpus = struct {
     formats: []const []const u8,
     visibility: Visibility,
     oauth: Oauth,
+    vocabulary: Vocabulary,
 
     pub fn batchCase(self: Corpus, name: []const u8) BatchCase {
         for (self.batch) |case| {
@@ -123,6 +124,71 @@ pub const ErrorExpect = struct {
     message: ?[]const u8 = null,
     retryAfterSeconds: ?u64 = null,
 };
+
+/// The `vocabulary` section: answers carrying a value no published closed set
+/// holds, each handed back as served. `expect` maps a path through the
+/// answer's wire names, a number indexing a list, to the value there.
+pub const Vocabulary = struct {
+    why: []const u8,
+    cases: []const VocabularyCase,
+};
+
+pub const VocabularyCase = struct {
+    name: []const u8,
+    why: ?[]const u8 = null,
+    call: []const u8,
+    answer: std.json.Value,
+    expect: std.json.ArrayHashMap(std.json.Value),
+};
+
+/// Fails unless the value at `path` inside `value`, a typed answer, is the
+/// JSON scalar `want`. A struct field is matched by its name, which is the
+/// wire's, and a list by a decimal index.
+pub fn expectPath(value: anytype, path: []const u8, want: std.json.Value) !void {
+    var segments: [16][]const u8 = undefined;
+    var count: usize = 0;
+    var it = std.mem.splitScalar(u8, path, '.');
+    while (it.next()) |segment| : (count += 1) {
+        segments[count] = segment;
+    }
+    return walk(@TypeOf(value), value, segments[0..count], path, want);
+}
+
+fn walk(comptime T: type, value: T, segments: []const []const u8, path: []const u8, want: std.json.Value) !void {
+    if (segments.len == 0) {
+        return expectScalar(T, value, want);
+    }
+    switch (@typeInfo(T)) {
+        .optional => |optional| {
+            const inner = value orelse {
+                std.debug.print("{s}: absent on the way\n", .{path});
+                return error.TestExpectedEqual;
+            };
+            return walk(optional.child, inner, segments, path, want);
+        },
+        .@"struct" => if (comptime !@hasField(T, "map")) {
+            inline for (comptime std.meta.fieldNames(T)) |field_name| {
+                if (std.mem.eql(u8, field_name, segments[0])) {
+                    return walk(@FieldType(T, field_name), @field(value, field_name), segments[1..], path, want);
+                }
+            }
+        },
+        .pointer => |pointer| if (comptime pointer.size == .slice and pointer.child != u8) {
+            const index = std.fmt.parseInt(usize, segments[0], 10) catch {
+                std.debug.print("{s}: {s} is no index into a list\n", .{ path, segments[0] });
+                return error.TestExpectedEqual;
+            };
+            if (index >= value.len) {
+                std.debug.print("{s}: the list holds {d}\n", .{ path, value.len });
+                return error.TestExpectedEqual;
+            }
+            return walk(pointer.child, value[index], segments[1..], path, want);
+        },
+        else => {},
+    }
+    std.debug.print("{s}: {s} is not a member the client models\n", .{ path, segments[0] });
+    return error.TestExpectedEqual;
+}
 
 /// What a private database being ABSENT from a listing demands of a client.
 /// Each rule is asserted by name in conformance.zig, and a rule this SDK does

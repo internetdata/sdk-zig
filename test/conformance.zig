@@ -532,6 +532,61 @@ test "a closed set the API may extend still parses" {
     try std.testing.expectEqualStrings("sublicense", catalog.value[count - 1].license_type.?);
 }
 
+// Each case serves a value no published set holds, and the call hands it back
+// as served: refusing one would break every installed copy the day the API
+// adds a value.
+test "a vocabulary value the API adds comes back as served" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+
+    for (data.value.vocabulary.cases) |case| {
+        errdefer std.debug.print("vocabulary case {s}\n", .{case.name});
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const arena = harness.stub.arena.allocator();
+        const body = try corpus.json(arena, case.answer);
+        var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+        defer client.deinit();
+
+        if (std.mem.eql(u8, case.call, "myEntitlement")) {
+            try harness.stub.route("/api/v1/entitlement", .ok(body));
+            const answer = try client.myEntitlement();
+            defer answer.deinit();
+            try expectEvery(case, answer.value, null);
+        } else if (std.mem.eql(u8, case.call, "listDatabases")) {
+            try harness.stub.route("/api/v2/database/list", .ok(body));
+            const answer = try client.database().list(.{});
+            defer answer.deinit();
+            try expectEvery(case, answer.value, "databases.");
+        } else if (std.mem.eql(u8, case.call, "listDownloads")) {
+            try harness.stub.route("/api/v2/database/downloads", .ok(body));
+            const answer = try client.database().downloads(null, .{});
+            defer answer.deinit();
+            try expectEvery(case, answer.value, "downloads.");
+        } else {
+            std.debug.print("vocabulary case {s} calls {s}, which this suite does not know\n", .{ case.name, case.call });
+            return error.TestExpectedEqual;
+        }
+    }
+}
+
+// The list calls hand back the list itself, so the wrapper's name is dropped
+// from each path.
+fn expectEvery(case: corpus.VocabularyCase, value: anytype, wrapper: ?[]const u8) !void {
+    try std.testing.expect(case.expect.map.count() > 0);
+    for (case.expect.map.keys(), case.expect.map.values()) |path, want| {
+        const inner = if (wrapper) |prefix| blk: {
+            if (!std.mem.startsWith(u8, path, prefix)) {
+                std.debug.print("{s}: {s} does not start with {s}\n", .{ case.name, path, prefix });
+                return error.TestExpectedEqual;
+            }
+            break :blk path[prefix.len..];
+        } else path;
+        try corpus.expectPath(value, inner, want);
+    }
+}
+
 // A format is the one closed set that is an INPUT, so it IS an enum: a typo
 // should not reach the wire to come back as a 400.
 test "every documented format is one the client can ask for" {
