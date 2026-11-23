@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.16.1 - 2026-11-23
+
+### Fixes
+
+- Comments: whose bot an unverified address claims, on spec 2026.11.22 ([`977eaec`](https://github.com/internetdata/sdk-zig/commit/977eaec13028c4fd2eecb401d532cb8dad0ad9c0))
+
 ## 2.16.0 - 2026-11-22
 
 ### Features
