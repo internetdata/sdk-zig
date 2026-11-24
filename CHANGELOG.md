@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.17.0 - 2026-11-24
+
+### Features
+
+- Refuse a first_seen or last_seen that is no YYYY-MM-DD date ([`ae128b4`](https://github.com/internetdata/sdk-zig/commit/ae128b4fbb172d3351b6c01fa8162c6d11d13952))
+
 ## 2.16.1 - 2026-11-23
 
 ### Fixes
