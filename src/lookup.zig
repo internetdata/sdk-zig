@@ -615,7 +615,7 @@ pub const DomainWeb = struct {
     title: []const u8,
     /// An English page's description.
     description: []const u8,
-    /// The day it was last read.
+    /// The day it was last read, empty when the crawl holds no page.
     last_seen: []const u8,
     links: DomainWebLinks,
 };
