@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
+A paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
 
 ```zig
 var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
@@ -108,8 +108,8 @@ Same answer `lookup` would give for that address, and the same cost against your
 const acct = try client.myEntitlement();
 defer acct.deinit();
 
-std.debug.print("{s}\n", .{acct.value.plan.key});        // max
-std.debug.print("{s}\n", .{acct.value.plan.name});       // Max, the name to show
+std.debug.print("{s}\n", .{acct.value.plan.key});        // data_4
+std.debug.print("{s}\n", .{acct.value.plan.name});       // Data, the name to show
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
