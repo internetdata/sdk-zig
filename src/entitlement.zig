@@ -32,7 +32,8 @@ pub const EntitlementApikey = struct {
 pub const EntitlementPlan = struct {
     /// The plan the organization is on, as an identifier that is never renamed
     /// or reused: `free` for the free plan, or a paid plan's key. Compare
-    /// against it, and show `name`.
+    /// against it, and show `name`. The Data plan is a key per quota,
+    /// `data_1` to `data_7`, each named Data.
     key: []const u8,
     /// The plan's name as the site and console show it: `Unlimited` for the
     /// free plan. Show this rather than a name built from `key`.
