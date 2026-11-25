@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 2.3.0 are described by their release commits.
 
+## 2.18.0 - 2026-11-25
+
+### Features
+
+- Send a visitor's user agent with a lookup, myIp or a batch ([`914916b`](https://github.com/internetdata/sdk-zig/commit/914916b826fee5cf0899ea01fe85eb903d01fe22))
+
+### Fixes
+
+- Re-pin the spec to 2026.11.25: the Data plan, a key per quota ([`727dc8f`](https://github.com/internetdata/sdk-zig/commit/727dc8f2a31000511714d36373ad3fcb2c9b02e5))
+
 ## 2.17.0 - 2026-11-24
 
 ### Features
