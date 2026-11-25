@@ -65,6 +65,20 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
     var wider = try client.lookupBatch(many_ips, .{ .concurrency = 4, .retries = 4 });
     defer wider.deinit();
 
+    const request_user_agent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    const verdict = try client.lookupWith("66.249.66.1", .{ .user_agent = request_user_agent });
+    defer verdict.deinit();
+    if (verdict.value.user_agent) |ua| {
+        std.debug.print("{s}: {s}\n", .{ ua.agent, ua.verdict });
+    }
+    const mine_as_agent = try client.myIpWith(.{ .user_agent = request_user_agent });
+    defer mine_as_agent.deinit();
+    var agents: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer agents.deinit(gpa);
+    try agents.put(gpa, "66.249.66.1", request_user_agent);
+    var agent_batch = try client.lookupBatch(&.{ "66.249.66.1", "8.8.8.8" }, .{ .user_agents = agents });
+    defer agent_batch.deinit();
+
     var sized = try internetdata.Client.init(gpa, threaded.io(), .{
         .cache = .{ .max_entries = 50_000, .ttl = .fromSeconds(6 * 60 * 60) },
     });

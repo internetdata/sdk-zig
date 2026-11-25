@@ -82,6 +82,15 @@ pub const CallOptions = struct {
     /// that the call fails with `error.BadRequest` and the result code
     /// `BUILD_GONE` in `diagnostics`.
     build: ?[]const u8 = null,
+    /// The `User-Agent` header of the request you are deciding on, sent as
+    /// `user_agent`. With every field, on a paid plan or the trial, the answer
+    /// then carries `user_agent`: the agent it names, and whether the address
+    /// bears that out. Read by `lookupWith` and `myIpWith` alone. Empty is
+    /// none; a longer one than the API reads (1024 bytes) is still sent, and
+    /// the API reads its start. A lookup's answer is cached and shared on the
+    /// address and this agent together, apart from the address's plain answer
+    /// and from another agent's. A bogon is answered locally and carries none.
+    user_agent: ?[]const u8 = null,
 };
 
 /// Per-call overrides for one batch.
@@ -100,6 +109,12 @@ pub const BatchOptions = struct {
     /// Zero refuses the whole batch: every address fails with
     /// `error.BadRequest` before any request is sent.
     concurrency: ?usize = null,
+    /// Each address's `User-Agent`, keyed by the address exactly as it is
+    /// given in `ips`, sent as `user_agents` only in a request where some
+    /// address carries one. Each answer is cached and shared on its address and
+    /// its agent together, as a lookup's is. An empty agent is none, and a
+    /// bogon carries none. Read only during the call; the map stays yours.
+    user_agents: std.StringHashMapUnmanaged([]const u8) = .empty,
 };
 
 /// A client for the InternetData API: lookups of an address, an AS or a domain,
@@ -242,17 +257,21 @@ pub const Client = struct {
         if (bogon.isBogon(carried)) {
             return lookup_mod.bogonLookup(self.gpa, carried);
         }
-        const cache = if (self.cache) |*cache| cache else return self.serve(carried, options, timeout, diag, null);
+        const agent = options.user_agent orelse "";
+        const cache = if (self.cache) |*cache| cache else return self.serve(carried, carried, options, timeout, diag, null);
+        // Cached and shared on the address and the agent together.
+        const key = try pairKey(self.gpa, carried, agent);
+        defer if (agent.len > 0) self.gpa.free(key);
         // Callers that miss at the same moment share one request: the first
         // leads it under its own options, the rest wait for its answer or its
         // failure. One whose leader was canceled asks again.
         while (true) {
-            switch (try cache.claim(self.io, carried, self.gpa)) {
+            switch (try cache.claim(self.io, key, self.gpa)) {
                 .hit => |cached| {
                     defer self.gpa.free(cached);
                     return self.parse(cached, diag);
                 },
-                .lead => |flight| return self.serve(carried, options, timeout, diag, flight),
+                .lead => |flight| return self.serve(carried, key, options, timeout, diag, flight),
                 .wait => |flight| switch (try self.waitFor(cache, flight, diag)) {
                     .served => |body| {
                         defer self.gpa.free(body);
@@ -269,10 +288,12 @@ pub const Client = struct {
     }
 
     /// Asks the API about one address, landing what it gets on the flight it
-    /// leads, if any: an answer is cached, and a failure reaches every waiter.
+    /// leads under `key`, if any: an answer is cached, and a failure reaches
+    /// every waiter.
     fn serve(
         self: *Client,
         carried: []const u8,
+        key: []const u8,
         options: CallOptions,
         timeout: Io.Duration,
         diag: *Diagnostics,
@@ -281,7 +302,7 @@ pub const Client = struct {
         var canceled = false;
         const result = self.ask(carried, options, timeout, diag, &canceled) catch |err| {
             if (flight) |led| {
-                self.cache.?.land(self.io, carried, led, if (canceled)
+                self.cache.?.land(self.io, key, led, if (canceled)
                     .abandoned
                 else
                     .{ .failed = .{ .err = err, .diagnostics = diag.* } });
@@ -289,7 +310,7 @@ pub const Client = struct {
             return err;
         };
         if (flight) |led| {
-            self.cache.?.land(self.io, carried, led, .{ .served = result.raw });
+            self.cache.?.land(self.io, key, led, .{ .served = result.raw });
         }
         return result;
     }
@@ -307,9 +328,11 @@ pub const Client = struct {
         try path.append(self.gpa, '/');
         try http.appendEncoded(self.gpa, &path, carried);
 
+        var slot: [1]http.Transport.Param = undefined;
         const attempt: AddressAttempt = .{
             .client = self,
             .path = path.items,
+            .query = agentQuery(options.user_agent, &slot),
             .timeout = timeout,
             .diag = diag,
             .canceled = canceled,
@@ -399,9 +422,9 @@ pub const Client = struct {
     /// call made through a proxy or a VPN reports the exit it left through -
     /// usually the point of asking.
     ///
-    /// Deliberately NOT cached. The cache is keyed by address, and which
-    /// address this is IS the question: a machine that moves between networks
-    /// would otherwise be told where it used to be.
+    /// Deliberately NOT cached, with a `user_agent` or without. The cache is
+    /// keyed by address, and which address this is IS the question: a machine
+    /// that moves between networks would otherwise be told where it used to be.
     pub fn myIp(self: *Client) CallError!Lookup {
         return self.myIpWith(.{});
     }
@@ -413,9 +436,11 @@ pub const Client = struct {
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
 
+        var slot: [1]http.Transport.Param = undefined;
         const attempt: AddressAttempt = .{
             .client = self,
             .path = "/myip",
+            .query = agentQuery(options.user_agent, &slot),
             .timeout = options.timeout orelse self.timeout,
             .diag = diag,
         };
@@ -504,6 +529,12 @@ pub const Client = struct {
         // entry's answer once the batch is done.
         var carried: std.ArrayList([]const u8) = .empty;
         defer carried.deinit(self.gpa);
+        // `agents[i]` is entry i's agent, empty for none, and `pairs[i]` what its
+        // answer is cached and shared under: the address and that agent.
+        var agents: std.ArrayList([]const u8) = .empty;
+        defer agents.deinit(self.gpa);
+        var pairs: std.ArrayList([]const u8) = .empty;
+        defer pairs.deinit(self.gpa);
         var owned: std.ArrayList([]const u8) = .empty;
         defer {
             for (owned.items) |text| {
@@ -519,6 +550,14 @@ pub const Client = struct {
         // answer is filled in here and never sent.
         var pending: std.ArrayList(usize) = .empty;
         defer pending.deinit(self.gpa);
+        // A request keys `user_agents` by address, so it holds each address once:
+        // an address already going out under another agent (two spellings of a
+        // mapped address, each with its own) is asked on its own after the
+        // chunks.
+        var chunked: std.StringHashMapUnmanaged(void) = .empty;
+        defer chunked.deinit(self.gpa);
+        var alone: std.ArrayList(usize) = .empty;
+        defer alone.deinit(self.gpa);
         // With a cache, every address is boarded before a chunk is built, so a
         // lookup arriving meanwhile waits for this batch rather than asking
         // again. `led[i]` is the flight entry i leads until its chunk lands it;
@@ -530,7 +569,7 @@ pub const Client = struct {
         // Whatever ends the batch early, no one is left waiting on it.
         errdefer if (self.cache) |*cache| {
             for (led.items, 0..) |maybe, index| if (maybe) |flight| {
-                cache.land(self.io, carried.items[index], flight, .abandoned);
+                cache.land(self.io, pairs.items[index], flight, .abandoned);
             };
             for (waits.items) |wait| if (wait.flight) |flight| {
                 cache.leave(self.io, flight);
@@ -556,7 +595,15 @@ pub const Client = struct {
                 break :blk copy;
             };
             try carried.append(self.gpa, address);
-            const leader = try leaders.getOrPut(self.gpa, address);
+            const agent = options.user_agents.get(key) orelse "";
+            try agents.append(self.gpa, agent);
+            const pair = try pairKey(self.gpa, address, agent);
+            if (agent.len > 0) {
+                errdefer self.gpa.free(pair);
+                try owned.append(self.gpa, pair);
+            }
+            try pairs.append(self.gpa, pair);
+            const leader = try leaders.getOrPut(self.gpa, pair);
             if (leader.found_existing) {
                 try followers.append(self.gpa, .{ .index = index, .leader = leader.value_ptr.* });
                 continue;
@@ -570,10 +617,15 @@ pub const Client = struct {
                 batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, address) };
                 continue;
             }
+            if (chunked.contains(address)) {
+                try alone.append(self.gpa, index);
+                continue;
+            }
             try pending.ensureUnusedCapacity(self.gpa, 1);
+            try chunked.ensureUnusedCapacity(self.gpa, 1);
             if (self.cache) |*cache| {
                 try waits.ensureUnusedCapacity(self.gpa, 1);
-                switch (try cache.claim(self.io, address, self.gpa)) {
+                switch (try cache.claim(self.io, pair, self.gpa)) {
                     .hit => |cached| {
                         defer self.gpa.free(cached);
                         var diag: Diagnostics = .{};
@@ -591,14 +643,18 @@ pub const Client = struct {
                 }
             }
             pending.appendAssumeCapacity(index);
+            chunked.putAssumeCapacity(address, {});
         }
         if (pending.items.len > 0) {
-            try self.sendChunks(&batch, carried.items, led.items, pending.items, options);
+            try self.sendChunks(&batch, carried.items, agents.items, pairs.items, led.items, pending.items, options);
         }
         for (waits.items) |*wait| {
             const flight = wait.flight.?;
             wait.flight = null;
-            batch.entries.values()[wait.index] = try self.answerWait(flight, carried.items[wait.index], options);
+            batch.entries.values()[wait.index] = try self.answerWait(flight, carried.items[wait.index], agents.items[wait.index], options);
+        }
+        for (alone.items) |index| {
+            batch.entries.values()[index] = try self.lookupEntry(carried.items[index], agents.items[index], options);
         }
         try self.answerFollowers(batch.entries.values(), followers.items);
         return batch;
@@ -608,6 +664,8 @@ pub const Client = struct {
         self: *Client,
         batch: *Batch,
         keys: []const []const u8,
+        agents: []const []const u8,
+        pairs: []const []const u8,
         flights: []?*Flight,
         pending: []const usize,
         options: BatchOptions,
@@ -615,6 +673,8 @@ pub const Client = struct {
         var work: Work = .{
             .client = self,
             .keys = keys,
+            .agents = agents,
+            .pairs = pairs,
             .entries = batch.entries.values(),
             .flights = flights,
             .pending = pending,
@@ -643,7 +703,7 @@ pub const Client = struct {
 
     /// The entry for an address another caller was already asking about: its
     /// answer, or its failure. One whose leader was canceled is asked again.
-    fn answerWait(self: *Client, flight: *Flight, address: []const u8, options: BatchOptions) Allocator.Error!Batch.Entry {
+    fn answerWait(self: *Client, flight: *Flight, address: []const u8, agent: []const u8, options: BatchOptions) Allocator.Error!Batch.Entry {
         var diag: Diagnostics = .{};
         const landing = self.waitFor(&self.cache.?, flight, &diag) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -659,25 +719,30 @@ pub const Client = struct {
                 return .{ .ok = answer };
             },
             .failed => |failure| return .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } },
-            .abandoned => {
-                const answer = self.lookupWith(address, .{
-                    .retries = options.retries,
-                    .timeout = options.timeout,
-                    .diagnostics = &diag,
-                }) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
-                };
-                return .{ .ok = answer };
-            },
+            .abandoned => return self.lookupEntry(address, agent, options),
         }
+    }
+
+    /// The entry for an address asked on its own, under the batch's options.
+    fn lookupEntry(self: *Client, address: []const u8, agent: []const u8, options: BatchOptions) Allocator.Error!Batch.Entry {
+        var diag: Diagnostics = .{};
+        const answer = self.lookupWith(address, .{
+            .retries = options.retries,
+            .timeout = options.timeout,
+            .user_agent = agent,
+            .diagnostics = &diag,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+        };
+        return .{ .ok = answer };
     }
 
     /// Ends the flight an entry leads, if it leads one.
     fn landEntry(self: *Client, work: *Work, index: usize, outcome: cache_mod.Cache.Outcome) void {
         const flight = work.flights[index] orelse return;
         work.flights[index] = null;
-        self.cache.?.land(self.io, work.keys[index], flight, outcome);
+        self.cache.?.land(self.io, work.pairs[index], flight, outcome);
     }
 
     /// Gives each address asked under a second spelling of a carried address
@@ -720,10 +785,22 @@ pub const Client = struct {
     fn postChunk(self: *Client, work: *Work, indexes: []const usize, diag: *Diagnostics) CallError!void {
         var addresses: std.ArrayList([]const u8) = .empty;
         defer addresses.deinit(self.gpa);
+        // Keyed by the address as `ips` sends it, the IPv4 address a mapped one
+        // carries included.
+        var agents: std.json.ArrayHashMap([]const u8) = .{};
+        defer agents.deinit(self.gpa);
         for (indexes) |index| {
             try addresses.append(self.gpa, work.keys[index]);
+            if (work.agents[index].len > 0) {
+                try agents.map.put(self.gpa, work.keys[index], work.agents[index]);
+            }
         }
-        const request_body = try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items }, .{});
+        // `user_agents` goes only with a chunk where some address carries one,
+        // never empty or null.
+        const request_body = if (agents.map.count() == 0)
+            try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items }, .{})
+        else
+            try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items, .user_agents = agents }, .{});
         defer self.gpa.free(request_body);
 
         const attempt: ChunkAttempt = .{
@@ -862,6 +939,7 @@ fn LookupAttempt(comptime T: type) type {
     return struct {
         client: *Client,
         path: []const u8,
+        query: []const http.Transport.Param = &.{},
         timeout: Io.Duration,
         diag: *Diagnostics,
         canceled: ?*bool = null,
@@ -869,6 +947,7 @@ fn LookupAttempt(comptime T: type) type {
         fn run(self: @This()) CallError!lookup_mod.Served(T) {
             const body = try http.send(&self.client.transport, self.client.gpa, self.client.io, .{
                 .path = self.path,
+                .query = self.query,
                 .retries = 0,
                 .timeout = self.timeout,
                 .diagnostics = self.diag,
@@ -953,6 +1032,10 @@ const Work = struct {
     client: *Client,
     /// What each entry is sent as: the address it carries.
     keys: []const []const u8,
+    /// Each entry's agent, empty for none.
+    agents: []const []const u8,
+    /// What each entry's answer is cached and shared under.
+    pairs: []const []const u8,
     entries: []Batch.Entry,
     /// The flight each entry leads, until its chunk lands it.
     flights: []?*Flight,
@@ -976,6 +1059,26 @@ fn runWorker(work: *Work) void {
         const to = @min(from + batch_max, work.pending.len);
         work.client.lookupChunk(work, work.pending[from..to]);
     }
+}
+
+/// The `user_agent` query parameter, or none for no agent or an empty one,
+/// which the API reads as none. Set by hand rather than checked against the
+/// spec's 1024: the API reads the start of a longer one and answers.
+/// `slot` holds it, since a slice of a literal here would die with this call.
+fn agentQuery(agent: ?[]const u8, slot: *[1]http.Transport.Param) []const http.Transport.Param {
+    const given = agent orelse return &.{};
+    if (given.len == 0) return &.{};
+    slot[0] = .{ .name = "user_agent", .value = given };
+    return slot;
+}
+
+/// What an answer is cached and shared under: the address alone without an
+/// agent, which the caller then owns nothing of, and otherwise the address and
+/// the agent, which the caller frees. An address holds no space, so the first
+/// one ends it.
+fn pairKey(gpa: Allocator, address: []const u8, agent: []const u8) Allocator.Error![]const u8 {
+    if (agent.len == 0) return address;
+    return std.fmt.allocPrint(gpa, "{s} {s}", .{ address, agent });
 }
 
 /// A member of a JSON object that is itself an object, or null.

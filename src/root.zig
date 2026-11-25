@@ -59,6 +59,7 @@ pub const AsnHostedDomains = @import("lookup.zig").AsnHostedDomains;
 pub const AsnLookup = @import("lookup.zig").AsnLookup;
 pub const AsnPrefix = @import("lookup.zig").AsnPrefix;
 pub const BitTorrentDetail = @import("lookup.zig").BitTorrentDetail;
+pub const BotDetail = @import("lookup.zig").BotDetail;
 pub const CarrierDetail = @import("lookup.zig").CarrierDetail;
 pub const ClassDetail = @import("lookup.zig").ClassDetail;
 pub const CohostedDomains = @import("lookup.zig").CohostedDomains;
@@ -89,6 +90,7 @@ pub const SatelliteDetail = @import("lookup.zig").SatelliteDetail;
 pub const Served = @import("lookup.zig").Served;
 pub const SmtpDetail = @import("lookup.zig").SmtpDetail;
 pub const SshDetail = @import("lookup.zig").SshDetail;
+pub const UserAgentVerdict = @import("lookup.zig").UserAgentVerdict;
 pub const WebDetail = @import("lookup.zig").WebDetail;
 pub const Whois = @import("lookup.zig").Whois;
 

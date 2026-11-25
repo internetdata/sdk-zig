@@ -64,7 +64,7 @@ pub const Answer = struct {
     pubproxy: ?PubproxyDetail = null,
     hosting: ?ClassDetail = null,
     cdn: ?ClassDetail = null,
-    /// Whose bot uses the address, on paid plans and the trial; empty when
+    /// Whose bot uses the address, on a paid plan or the trial; empty when
     /// `is_bot` is false.
     bot: ?BotDetail = null,
     carrier: ?CarrierDetail = null,
@@ -85,8 +85,9 @@ pub const Answer = struct {
     whois: ?Whois = null,
     rwhois: ?Rwhois = null,
     hosted_domains: ?HostedDomains = null,
-    /// The verdict on a `User-Agent` sent with the lookup. This version sends
-    /// none, so it stays null.
+    /// The agent the `user_agent` sent with the lookup names, and whether the
+    /// address bears it out; on a paid plan or the trial, and only when one was
+    /// sent. A bogon is answered locally and never carries one.
     user_agent: ?UserAgentVerdict = null,
     /// On answers to a key on the free plan only: false while its organization's
     /// trial of every field lasts, true once the answer has Unlimited's.

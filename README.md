@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-A paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, and `whois`, `rwhois` and `hosted_domains`. Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
+A paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, `whois`, `rwhois` and `hosted_domains`, and `user_agent`, when a lookup sends the user agent of the request you are deciding on (below). Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
 
 ```zig
 var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
@@ -76,6 +76,32 @@ std.debug.print("{s}\n", .{result.value.location.city.?});       // Vienna, on a
 ```
 
 The blanks around a key, a file's trailing newline among them, are dropped, and a key of blanks alone is no key at all. A key holding any other control character is refused: every call that would send it fails with `BadRequest` before anything leaves the client.
+
+### The visitor's user agent
+
+Pass the `User-Agent` header of the request you are deciding on, and with every field (a paid plan or the trial) the answer carries `user_agent`: the agent it names, what kind of client that is, and whether the address bears it out (`verified`, `spoofed`, `unverifiable` or `not_bot`):
+
+```zig
+const result = try client.lookupWith("66.249.66.1", .{ .user_agent = request_user_agent });
+defer result.deinit();
+
+if (result.value.user_agent) |ua| {
+    std.debug.print("{s}: {s}\n", .{ ua.agent, ua.verdict }); // Googlebot: verified
+}
+```
+
+`myIpWith` takes one too. A batch takes a map from each address, exactly as you list it, to its agent:
+
+```zig
+var agents: std.StringHashMapUnmanaged([]const u8) = .empty;
+defer agents.deinit(gpa);
+try agents.put(gpa, "66.249.66.1", request_user_agent);
+
+var batch = try client.lookupBatch(&.{ "66.249.66.1", "8.8.8.8" }, .{ .user_agents = agents });
+defer batch.deinit();
+```
+
+An empty agent is none. Answers are cached on the address and the agent together, so an answer with an agent is never handed to the same address's lookup without one, or with another agent. A private or reserved address is answered locally and carries no `user_agent`.
 
 ### AS and domain lookups
 
@@ -393,7 +419,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's (`bot` among it), `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's (`bot` among it), `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. `user_agent` is there only when the lookup sent one, with every field. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const vpn = result.value.is_vpn orelse false;    // when you only want the flag
