@@ -37,6 +37,13 @@ test "live lookup" {
     try std.testing.expectEqualStrings("146.70.116.130", result.value.ip);
     try std.testing.expect(!result.value.is_bogon);
     try std.testing.expect(result.value.asn.asn > 0);
+    // The eight flags of a paid plan or the trial: served with every field, and
+    // left out of Unlimited's answer, where a plain bool reads false.
+    inline for (.{ "is_bot", "is_carrier", "is_satellite", "is_ssh", "is_smtp", "is_web", "is_dns_resolver", "is_bittorrent" }) |name| {
+        const served = std.mem.indexOf(u8, result.raw, "\"" ++ name ++ "\":") != null;
+        try std.testing.expectEqual(result.value.is_vpn != null, served);
+        if (!served) try std.testing.expectEqual(false, @field(result.value, name));
+    }
     if (key.len == 0) {
         // The one assertion a stub cannot make honestly: an answer without a key
         // leaves the paid members out, so they are ABSENT rather than false.

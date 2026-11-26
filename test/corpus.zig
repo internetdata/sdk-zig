@@ -63,6 +63,26 @@ pub const BogonResponse = struct {
     answer: std.json.Value,
 };
 
+/// Held at their public `bool` type until the next major, so an answer that
+/// leaves one out reads false and the corpus's `absent` asserts that instead.
+pub const held_flags = [_][]const u8{
+    "is_bot",
+    "is_carrier",
+    "is_satellite",
+    "is_ssh",
+    "is_smtp",
+    "is_web",
+    "is_dns_resolver",
+    "is_bittorrent",
+};
+
+pub fn isHeld(name: []const u8) bool {
+    for (held_flags) |held| {
+        if (std.mem.eql(u8, held, name)) return true;
+    }
+    return false;
+}
+
 /// One served answer: `call` is `lookup`, `lookupAsn` or `lookupDomain`, and
 /// `target` the address, AS number or domain it is asked about.
 pub const LookupCase = struct {

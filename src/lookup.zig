@@ -10,8 +10,9 @@ const Allocator = std.mem.Allocator;
 /// could not check", so `null` and `false` are genuinely different answers:
 /// `null` is "not in your plan", `false` is "checked, and no". This is the
 /// single most important semantic in the library, and it is why every
-/// tier-gated flag is a `?bool` rather than a `bool`, and every paid member of
-/// a shared object (`location.city`, `company.type`) an optional too.
+/// tier-gated flag is a `?bool` rather than a `bool` (bar the eight `is_bot`
+/// documents), and every paid member of a shared object (`location.city`,
+/// `company.type`) an optional too.
 /// `orelse` is the reader for callers who only want to know whether an address
 /// is flagged:
 ///
@@ -41,20 +42,28 @@ pub const Answer = struct {
     is_pubproxy: ?bool = null,
     is_hosting: ?bool = null,
     is_cdn: ?bool = null,
-    /// Bot IP, on every plan: an automated client's address, such as a search
-    /// engine's or an AI company's crawler, an uptime monitor, an internet
-    /// scanner or a webhook sender. `bot` says whose. Every served answer
-    /// carries it; the default only keeps a struct literal written before it
-    /// building.
+    /// Bot IP: an automated client's address, such as a search engine's or an AI
+    /// company's crawler, an uptime monitor, an internet scanner or a webhook
+    /// sender. `bot` says whose. On a paid plan or the trial. These eight flags
+    /// (`is_bot` to `is_bittorrent`) keep their `bool` type until the next
+    /// major, so an Unlimited answer, which leaves them out, reads false; `raw`
+    /// shows whether the answer carried one.
     is_bot: bool = false,
     is_anycast: bool,
-    is_carrier: bool,
-    is_satellite: bool,
-    is_ssh: bool,
-    is_smtp: bool,
-    is_web: bool,
-    is_dns_resolver: bool,
-    is_bittorrent: bool,
+    /// Carrier IP: a mobile carrier's address space. On a paid plan or the trial.
+    is_carrier: bool = false,
+    /// Satellite IP: a satellite operator's address space. On a paid plan or the trial.
+    is_satellite: bool = false,
+    /// SSH IP: an SSH server answered here. On a paid plan or the trial.
+    is_ssh: bool = false,
+    /// SMTP IP: a mail server answered here. On a paid plan or the trial.
+    is_smtp: bool = false,
+    /// Web IP: a web server answered here on port 80 or 443. On a paid plan or the trial.
+    is_web: bool = false,
+    /// DNS Resolver IP: an open DNS resolver answered here. On a paid plan or the trial.
+    is_dns_resolver: bool = false,
+    /// BitTorrent IP: a BitTorrent client was seen here in the last 90 days. On a paid plan or the trial.
+    is_bittorrent: bool = false,
     vpn: ?ClassDetail = null,
     tor: ClassDetail,
     relay: ClassDetail,
@@ -331,8 +340,9 @@ pub const Asn = struct {
     name: []const u8,
     /// The AS operator's own domain.
     domain: []const u8,
-    /// The kind of network it runs, e.g. `isp` or `hosting`.
-    type: []const u8,
+    /// The kind of network it runs, e.g. `isp` or `hosting`. On a paid plan or the
+    /// trial; an answer that leaves it out reads empty.
+    type: []const u8 = "",
     /// The announced prefix covering the address.
     prefix: []const u8,
     /// The country its registry assigned it to.
@@ -791,9 +801,7 @@ fn empty(comptime T: type, gpa: Allocator) Allocator.Error!Served(T) {
 /// The members every plan answers, and nothing else: Unlimited's shape with no
 /// country and no announcement.
 const unlimited =
-    \\{"ip":"1.1.1.1","is_bogon":false,"is_tor":false,"is_relay":false,"is_bot":false,"is_anycast":false,
-    \\"is_carrier":false,"is_satellite":false,"is_ssh":false,"is_smtp":false,"is_web":false,
-    \\"is_dns_resolver":false,"is_bittorrent":false,"tor":{},"relay":{},
+    \\{"ip":"1.1.1.1","is_bogon":false,"is_tor":false,"is_relay":false,"is_anycast":false,"tor":{},"relay":{},
     \\"location":{"continent":"","continent_name":"","country":"","country_name":"","timezone":"",
     \\"currency_code":"","currency_name":"","currency_symbol":"","flag_emoji":"","flag_unicode":""},
     \\"asn":{"asn":0,"name":"","domain":"","type":"","prefix":"","country":"","rpki_status":""},
@@ -852,8 +860,6 @@ test "a body missing a required member is malformed" {
 test "a required member a struct literal may leave out is still required on the wire" {
     const gpa = std.testing.allocator;
     const cases = [_]struct { from: []const u8, to: []const u8 }{
-        .{ .from = "\"is_bot\":false,", .to = "" },
-        .{ .from = "\"is_bot\":false,", .to = "\"is_bot\":null," },
         .{ .from = "\"prefix\":\"\",\"country\":\"\"", .to = "\"prefix\":\"\"" },
         .{ .from = "\"prefix\":\"\",\"country\":\"\"", .to = "\"prefix\":\"\",\"country\":null" },
         .{ .from = ",\"rpki_status\":\"\"", .to = "" },
@@ -891,4 +897,66 @@ test "is_bot and a paid answer's bot are read" {
     try std.testing.expectEqualStrings("search_engine", bot.categories.?[0]);
     try std.testing.expectEqual(@as(?bool, true), bot.verified);
     try std.testing.expectEqualStrings("list", bot.verified_by.?);
+}
+
+const held_flags = [_][]const u8{
+    "is_bot",  "is_carrier", "is_satellite",    "is_ssh",
+    "is_smtp", "is_web",     "is_dns_resolver", "is_bittorrent",
+};
+
+test "an answer without the eight paid flags reads them false, and one with them reads as served" {
+    const gpa = std.testing.allocator;
+    const without = try parseServed(Answer, gpa, unlimited ++ "}");
+    defer without.deinit();
+    inline for (held_flags) |name| try std.testing.expectEqual(false, @field(without.value, name));
+
+    const all_true = comptime blk: {
+        var members: []const u8 = "";
+        for (held_flags) |name| members = members ++ (if (members.len > 0) "," else "") ++ "\"" ++ name ++ "\":true";
+        break :blk members;
+    };
+    const with = try parseServed(Answer, gpa, withMember(all_true));
+    defer with.deinit();
+    inline for (held_flags) |name| try std.testing.expectEqual(true, @field(with.value, name));
+
+    // Each one alone, so a member read as its neighbor's is caught.
+    inline for (held_flags) |name| {
+        const alone = try parseServed(Answer, gpa, withMember("\"" ++ name ++ "\":true"));
+        defer alone.deinit();
+        inline for (held_flags) |other| {
+            try std.testing.expectEqual(comptime std.mem.eql(u8, name, other), @field(alone.value, other));
+        }
+    }
+}
+
+test "a paid flag present as a string, a number or null is still refused" {
+    const gpa = std.testing.allocator;
+    inline for (held_flags) |name| {
+        inline for ([_][]const u8{ "\"false\"", "\"true\"", "1", "0", "null", "[]", "{}" }) |bad| {
+            try std.testing.expectError(
+                error.Malformed,
+                parseServed(Answer, gpa, withMember("\"" ++ name ++ "\":" ++ bad)),
+            );
+        }
+    }
+}
+
+test "an answer without asn.type reads it empty, and a wrong type is still refused" {
+    const gpa = std.testing.allocator;
+    const body = try std.mem.replaceOwned(u8, gpa, unlimited ++ "}", "\"type\":\"\",", "");
+    defer gpa.free(body);
+    try std.testing.expect(!std.mem.eql(u8, body, unlimited ++ "}"));
+    const without = try parseServed(Answer, gpa, body);
+    defer without.deinit();
+    try std.testing.expectEqualStrings("", without.value.asn.type);
+
+    const typed = try std.mem.replaceOwned(u8, gpa, unlimited ++ "}", "\"type\":\"\"", "\"type\":\"hosting\"");
+    defer gpa.free(typed);
+    const served = try parseServed(Answer, gpa, typed);
+    defer served.deinit();
+    try std.testing.expectEqualStrings("hosting", served.value.asn.type);
+
+    const number = try std.mem.replaceOwned(u8, gpa, unlimited ++ "}", "\"type\":\"\"", "\"type\":1");
+    defer gpa.free(number);
+    try std.testing.expectError(error.Malformed, parseServed(Answer, gpa, number));
 }

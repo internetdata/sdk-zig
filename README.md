@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** Unlimited, the free plan, answers every flag but the paid ones below, `is_bot` among them, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, with no daily or monthly cap.
+**No API key needed to start.** Unlimited, the free plan, answers `is_bogon`, `is_tor`, `is_relay` and `is_anycast`, Tor's and relay's detail, `location`, `asn`, `company`, `abuse` and `hostname`, with no daily or monthly cap.
 
 ```zig
 const std = @import("std");
@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-A paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, `whois`, `rwhois` and `hosted_domains`, and `user_agent`, when a lookup sends the user agent of the request you are deciding on (below). Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
+A paid plan answers every field: `is_vpn`, `is_hosting`, `is_cdn`, the four proxy flags, `is_bot`, `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent` as well, the detail behind each flag (`bot` names whose bot is behind `is_bot`, what it does and whether its operator vouches for the address), the rest of `location`, `asn`, `company` and `abuse`, `whois`, `rwhois` and `hosted_domains`, and `user_agent`, when a lookup sends the user agent of the request you are deciding on (below). Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.internetdata.io), then pass it in:
 
 ```zig
 var client = try internetdata.Client.init(gpa, io, .{ .api_key = key });
@@ -419,7 +419,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn` and the four proxy flags, the detail behind every flag but Tor's and relay's (`bot` among it), `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. `user_agent` is there only when the lookup sent one, with every field. Every member the API doesn't always send is optional, because your key decides which of them it sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_vpn`, `is_hosting`, `is_cdn`, the four proxy flags, `is_bot`, `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, the detail behind every flag but Tor's and relay's (`bot` among it), `whois`, `rwhois` and `hosted_domains`, and the rest of `location`, `asn`, `company` and `abuse`; a free-plan key's answer carries `trial_expired`, true once its trial is spent. A paid key's carries `cap_reached`, true once its organization's overage cap is reached, when the answer has Unlimited's fields and isn't billed. `user_agent` is there only when the lookup sent one, with every field. Every member the API doesn't always send is optional, because your key decides which of them it sends, bar the last eight flags: they stay plain `bool`s until the next major, and read `false` when the answer leaves them out, so `result.raw` is what shows whether it carried one. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const vpn = result.value.is_vpn orelse false;    // when you only want the flag
@@ -427,6 +427,7 @@ if (result.value.is_vpn == null) { ... }         // on Unlimited: not in your pl
 if (result.value.location.city == null) { ... }  // the same, inside an object every plan answers
 if (result.value.trial_expired == true) { ... }  // a free-plan key's trial is spent
 if (result.value.cap_reached == true) { ... }    // a paid key is past its overage cap
+const ssh = result.value.is_ssh;                 // false on Unlimited, which leaves it out
 ```
 
 ## Other Libraries

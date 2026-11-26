@@ -418,9 +418,7 @@ fn jsonMessage(gpa: Allocator, body: []const u8) ![]u8 {
 /// country and no announcement, and `extra` members after them.
 pub fn lookupBody(arena: Allocator, ip: []const u8, extra: []const u8) ![]const u8 {
     return std.fmt.allocPrint(arena,
-        \\{{"ip":"{s}","is_bogon":false,"is_tor":false,"is_relay":false,"is_bot":false,"is_anycast":false,
-        \\"is_carrier":false,"is_satellite":false,"is_ssh":false,"is_smtp":false,"is_web":false,
-        \\"is_dns_resolver":false,"is_bittorrent":false,"tor":{{}},"relay":{{}},
+        \\{{"ip":"{s}","is_bogon":false,"is_tor":false,"is_relay":false,"is_anycast":false,"tor":{{}},"relay":{{}},
         \\"location":{{"continent":"","continent_name":"","country":"","country_name":"","timezone":"",
         \\"currency_code":"","currency_name":"","currency_symbol":"","flag_emoji":"","flag_unicode":""}},
         \\"asn":{{"asn":0,"name":"","domain":"","type":"","prefix":"","country":"","rpki_status":""}},

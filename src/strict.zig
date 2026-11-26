@@ -55,9 +55,6 @@ const Entry = struct { T: type, name: []const u8, required: bool = false, non_nu
 /// literal must not be made to name, adds it here, `non_null` too where its
 /// type is optional and the spec does not mark it nullable.
 const rules = [_]Entry{
-    // Added by 2.16.0, after the struct was public: a default keeps every
-    // struct literal a caller wrote building.
-    .{ .T = lookup.Answer, .name = "is_bot", .required = true },
     // Required since spec 2026.11.20, after they were public as optional types:
     // they stay `?[]const u8 = null` until a major, so a caller's struct literal
     // still builds, and the decoder refuses an answer without them.

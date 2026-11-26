@@ -93,6 +93,8 @@ fn examples(gpa: std.mem.Allocator, key: []const u8) !void {
 
     const vpn = result.value.is_vpn orelse false;
     _ = vpn;
+    const ssh = result.value.is_ssh;
+    _ = ssh;
     if (result.value.is_vpn == null or result.value.location.city == null or result.value.trial_expired == true or
         result.value.cap_reached == true)
     {

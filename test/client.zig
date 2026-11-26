@@ -1721,10 +1721,14 @@ const wrong_answers = [_]Case{
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_tor\":false,", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"AU\",", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"title\":\"\",", .to = "" },
-    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_bot\":false,", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"NL\",", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"is_bot\":false,", .to = "\"is_bot\":null," },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_carrier\":false", .to = "\"is_carrier\":null" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_satellite\":false", .to = "\"is_satellite\":\"false\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_web\":true", .to = "\"is_web\":1" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"is_bittorrent\":false", .to = "\"is_bittorrent\":\"true\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"type\":\"t\"", .to = "\"type\":5" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"company\":{\"name\":\"c\",\"domain\":\"d\"},", .to = "" },
     .{ .path = "/asn/9009", .body = asn_ok, .from = "\"num_ips\":3", .to = "\"num_ips\":\"3\"" },
@@ -1932,6 +1936,46 @@ test "a batch entry with a member of the wrong type or missing fails that addres
         },
     };
     try std.testing.expect(batch.get("9.9.9.9").? == .ok);
+}
+
+test "an Unlimited answer without the eight paid flags reads, in a lookup, myIp and every batch entry" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/1.1.1.1", .{ .body = try lookupBody(harness, "1.1.1.1", "") });
+    try harness.stub.route("/myip", .{ .body = try lookupBody(harness, "1.1.1.1", "") });
+    const batched = try harness.stub.printed("{{\"results\":{{\"8.8.8.8\":{s},\"9.9.9.9\":{s}}}}}", .{
+        try lookupBody(harness, "8.8.8.8", ""),
+        try lookupBody(harness, "9.9.9.9", "\"is_ssh\":true"),
+    });
+    try harness.stub.route("/batch", .{ .body = batched, .verbatim = true });
+    var client = try harness.client(.{ .retries = 0, .cache = null });
+    defer client.deinit();
+
+    const looked_up = try client.lookup("1.1.1.1");
+    defer looked_up.deinit();
+    const mine = try client.myIp();
+    defer mine.deinit();
+    var batch = try client.lookupBatch(&.{ "8.8.8.8", "9.9.9.9" }, .{});
+    defer batch.deinit();
+
+    const first = batch.get("8.8.8.8").?.ok;
+    const second = batch.get("9.9.9.9").?.ok;
+    try expectNoPaidFlags(looked_up);
+    try expectNoPaidFlags(mine);
+    try expectNoPaidFlags(first);
+    try std.testing.expectEqual(true, second.value.is_ssh);
+    try std.testing.expectEqual(false, second.value.is_smtp);
+    try std.testing.expectEqual(3, harness.stub.callCount());
+}
+
+fn expectNoPaidFlags(answer: internetdata.Lookup) !void {
+    try std.testing.expect(std.mem.indexOf(u8, answer.raw, "\"is_bot\"") == null);
+    inline for (comptime std.meta.fieldNames(internetdata.Answer)) |name| {
+        if (comptime support.corpus.isHeld(name)) {
+            try std.testing.expectEqual(false, @field(answer.value, name));
+        }
+    }
 }
 
 test "an entitlement date-time in any of RFC 3339's spellings is read" {

@@ -200,8 +200,9 @@ fn expectLookupCase(gpa: std.mem.Allocator, value: anytype, case: corpus.LookupC
         }
     }
     for (case.expect.absent) |name| {
-        std.testing.expectEqual(corpus.Member.absent, corpus.member(value, name)) catch |err| {
-            std.debug.print("{s}: {s} must be ABSENT\n", .{ case.name, name });
+        const want: corpus.Member = if (corpus.isHeld(name)) .{ .flag = false } else .absent;
+        std.testing.expectEqual(want, corpus.member(value, name)) catch |err| {
+            std.debug.print("{s}: {s} must be {s}\n", .{ case.name, name, if (corpus.isHeld(name)) "FALSE (held)" else "ABSENT" });
             return err;
         };
     }
@@ -212,8 +213,16 @@ fn expectLookupCase(gpa: std.mem.Allocator, value: anytype, case: corpus.LookupC
     // body holds was dropped, renamed or read as another type, at any depth.
     const encoded = try std.json.Stringify.valueAlloc(gpa, value, .{ .emit_null_optional_fields = false });
     defer gpa.free(encoded);
-    const decoded = try std.json.parseFromSlice(std.json.Value, gpa, encoded, .{});
+    var decoded = try std.json.parseFromSlice(std.json.Value, gpa, encoded, .{});
     defer decoded.deinit();
+    // A held flag the body left out was read as false, and encodes as false.
+    for (corpus.held_flags) |name| {
+        if (case.body.object.contains(name)) continue;
+        if (decoded.value.object.get(name)) |read| {
+            try std.testing.expectEqual(false, read.bool);
+            _ = decoded.value.object.orderedRemove(name);
+        }
+    }
     if (!corpus.sameJson(case.body, decoded.value)) {
         std.debug.print("{s}: decoded as {s}\n", .{ case.name, encoded });
         return error.TestExpectedEqual;

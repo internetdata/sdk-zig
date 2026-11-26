@@ -19,6 +19,26 @@ const Rung = staging.Rung;
 /// Both hosts the keyless checks run against.
 const origins = [_][]const u8{ staging.upstream, staging.production };
 
+/// Plain `bool`s until the next major, so an answer that leaves one out reads
+/// false, and they cannot tell absent from served.
+const held_flags = [_][]const u8{
+    "is_bot",
+    "is_carrier",
+    "is_satellite",
+    "is_ssh",
+    "is_smtp",
+    "is_web",
+    "is_dns_resolver",
+    "is_bittorrent",
+};
+
+fn isHeld(name: []const u8) bool {
+    for (held_flags) |held| {
+        if (std.mem.eql(u8, held, name)) return true;
+    }
+    return false;
+}
+
 test "a keyless lookup answers every plan's members and leaves the paid ones out" {
     const gpa = std.testing.allocator;
     for (origins) |origin| {
@@ -191,7 +211,7 @@ test "a field the key's answer serves is absent from the keyless one, never fals
             continue;
         }
         const held = modelled(narrow.value, field);
-        if (held.known and held.present) {
+        if (held.known and held.present and !isHeld(field)) {
             std.debug.print("{s} is not in the keyless plan, so the result must not read as a value\n", .{field});
             return error.TestExpectedEqual;
         }
@@ -265,6 +285,12 @@ fn expectKeylessLookup(answer: internetdata.Answer) !void {
     }
     // From 2.16.0; the range still admits releases without it.
     if (comptime @hasField(internetdata.Answer, "bot")) try expectAbsent("bot", answer.bot);
+    inline for (held_flags) |name| {
+        if (@field(answer, name)) {
+            std.debug.print("{s} must read false without a key\n", .{name});
+            return error.TestExpectedEqual;
+        }
+    }
     const paid_location = .{ "region", "region_code", "city", "postal_code", "latitude", "longitude" } ++
         .{ "accuracy_radius", "geoname_id", "dma_code", "last_changed" };
     inline for (paid_location) |name| {
@@ -292,6 +318,7 @@ fn expectServedAsDecoded(gpa: std.mem.Allocator, raw: []const u8, value: anytype
     const served = try std.json.parseFromSlice(std.json.Value, gpa, raw, .{});
     defer served.deinit();
     inline for (comptime std.meta.fieldNames(@TypeOf(value))) |name| {
+        if (comptime isHeld(name)) continue;
         const held = @field(value, name);
         const present = if (comptime @typeInfo(@TypeOf(held)) == .optional) held != null else true;
         if (present != served.value.object.contains(name)) {
