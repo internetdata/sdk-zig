@@ -85,11 +85,13 @@ pub const CallOptions = struct {
     /// The `User-Agent` header of the request you are deciding on, sent as
     /// `user_agent`. With every field, on a paid plan or the trial, the answer
     /// then carries `user_agent`: the agent it names, and whether the address
-    /// bears that out. Read by `lookupWith` and `myIpWith` alone. Empty is
-    /// none; a longer one than the API reads (1024 bytes) is still sent, and
-    /// the API reads its start. A lookup's answer is cached and shared on the
-    /// address and this agent together, apart from the address's plain answer
-    /// and from another agent's. A bogon is answered locally and carries none.
+    /// bears that out. Read by `lookupWith` and `myIpWith`; `lookupAsnWith`,
+    /// `lookupDomainWith` and `myEntitlementWith` refuse one with
+    /// `error.BadRequest` before anything is sent. Empty is none; a longer one
+    /// than the API reads (1024 bytes) is still sent, and the API reads its
+    /// start. A lookup's answer is cached and shared on the address and this
+    /// agent together, apart from the address's plain answer and from another
+    /// agent's. A bogon is answered locally and carries none.
     user_agent: ?[]const u8 = null,
 };
 
@@ -369,6 +371,7 @@ pub const Client = struct {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
+        try refuseAgent(options, diag, "lookupAsn");
 
         var buffer: [16]u8 = undefined;
         const Attempt = LookupAttempt(lookup_mod.AsnAnswer);
@@ -398,6 +401,7 @@ pub const Client = struct {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
+        try refuseAgent(options, diag, "lookupDomain");
 
         var path: std.ArrayList(u8) = .empty;
         defer path.deinit(self.gpa);
@@ -475,6 +479,7 @@ pub const Client = struct {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
+        try refuseAgent(options, diag, "myEntitlement");
 
         return http.getParsed(Entitlement, &self.transport, self.gpa, self.io, .{
             .path = "/api/v1/entitlement",
@@ -1059,6 +1064,17 @@ fn runWorker(work: *Work) void {
         const to = @min(from + batch_max, work.pending.len);
         work.client.lookupChunk(work, work.pending[from..to]);
     }
+}
+
+/// The AS, domain and entitlement calls take no `user_agent`, as the spec gives
+/// them none, so one is refused with `error.BadRequest` before anything is
+/// sent: dropped, it would leave the caller expecting a verdict the answer
+/// never carries. An empty agent is none, as on a lookup.
+fn refuseAgent(options: CallOptions, diag: *Diagnostics, comptime call: []const u8) error{BadRequest}!void {
+    const agent = options.user_agent orelse return;
+    if (agent.len == 0) return;
+    diag.setMessage(call ++ " takes no user agent");
+    return error.BadRequest;
 }
 
 /// The `user_agent` query parameter, or none for no agent or an empty one,

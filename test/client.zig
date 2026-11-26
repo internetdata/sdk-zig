@@ -1642,6 +1642,43 @@ const lookup_ok =
     \\"hostname":"h","abuse":{"email":"a"},
     \\"whois":{"id":"","name":"","org":"","country":"","status":"","source":"","domain":"","abuse_email":"","asn":13335}}
 ;
+test "the AS, domain and entitlement calls refuse a user agent and send nothing" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/entitlement", .ok(entitlement_ok));
+    try harness.stub.route("/asn/9009", .ok(asn_ok));
+    try harness.stub.route("/domain/example.com", .ok(domain_ok));
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+    defer client.deinit();
+    const agent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    var diagnostics: [3]internetdata.Diagnostics = @splat(.{});
+    try std.testing.expectError(error.BadRequest, client.lookupAsnWith(9009, .{ .user_agent = agent, .diagnostics = &diagnostics[0] }));
+    try std.testing.expectError(error.BadRequest, client.lookupDomainWith("example.com", .{ .user_agent = agent, .diagnostics = &diagnostics[1] }));
+    try std.testing.expectError(error.BadRequest, client.myEntitlementWith(.{ .user_agent = agent, .diagnostics = &diagnostics[2] }));
+    try std.testing.expectEqualStrings("lookupAsn takes no user agent", diagnostics[0].message());
+    try std.testing.expectEqualStrings("lookupDomain takes no user agent", diagnostics[1].message());
+    try std.testing.expectEqualStrings("myEntitlement takes no user agent", diagnostics[2].message());
+    try std.testing.expectEqual(0, harness.stub.callCount());
+}
+
+test "an empty user agent on the AS, domain and entitlement calls is none" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/entitlement", .ok(entitlement_ok));
+    try harness.stub.route("/asn/9009", .ok(asn_ok));
+    try harness.stub.route("/domain/example.com", .ok(domain_ok));
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+    defer client.deinit();
+    (try client.lookupAsnWith(9009, .{ .user_agent = "" })).deinit();
+    (try client.lookupDomainWith("example.com", .{ .user_agent = "" })).deinit();
+    (try client.myEntitlementWith(.{ .user_agent = "" })).deinit();
+    try std.testing.expectEqual(3, harness.stub.callCount());
+}
+
 const asn_ok =
     \\{"asn":9009,"name":"n","country":"RO","registry":"ripe","allocated":"2005-06-06","domain":"d","num_ips":3,
     \\"whois":{"handle":"M247"},"prefixes":[{"prefix":"p","peer_count":1,"rpki_status":"valid","first_seen":"2026-10-02",
