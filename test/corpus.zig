@@ -83,6 +83,12 @@ pub fn isHeld(name: []const u8) bool {
     return false;
 }
 
+/// `asn.type` is held at its `[]const u8` type too, so an answer that leaves it out
+/// reads it empty, and the corpus's `absentIn` asserts that instead.
+pub fn isHeldIn(object: []const u8, name: []const u8) bool {
+    return std.mem.eql(u8, object, "asn") and std.mem.eql(u8, name, "type");
+}
+
 /// One served answer: `call` is `lookup`, `lookupAsn` or `lookupDomain`, and
 /// `target` the address, AS number or domain it is asked about.
 pub const LookupCase = struct {
@@ -503,6 +509,13 @@ pub fn expectAbsentIn(value: anytype, object: []const u8, names: []const []const
                     return error.TestExpectedEqual;
                 };
                 for (names) |name| {
+                    if (isHeldIn(object, name)) {
+                        expectReadsEmpty(inner, name) catch |err| {
+                            std.debug.print("{s}.{s} must be EMPTY (held)\n", .{ object, name });
+                            return err;
+                        };
+                        continue;
+                    }
                     std.testing.expectEqual(Member.absent, member(inner, name)) catch |err| {
                         std.debug.print("{s}.{s} must be ABSENT\n", .{ object, name });
                         return err;
@@ -513,6 +526,19 @@ pub fn expectAbsentIn(value: anytype, object: []const u8, names: []const []const
         }
     }
     std.debug.print("{s} is not an object the client models\n", .{object});
+    return error.TestExpectedEqual;
+}
+
+/// Fails unless the string member of `value` called `name` is empty.
+fn expectReadsEmpty(value: anytype, name: []const u8) !void {
+    const T = @TypeOf(value);
+    inline for (comptime std.meta.fieldNames(T)) |field_name| {
+        if (comptime @FieldType(T, field_name) == []const u8) {
+            if (std.mem.eql(u8, field_name, name)) {
+                return std.testing.expectEqualStrings("", @field(value, field_name));
+            }
+        }
+    }
     return error.TestExpectedEqual;
 }
 

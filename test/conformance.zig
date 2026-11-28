@@ -223,6 +223,17 @@ fn expectLookupCase(gpa: std.mem.Allocator, value: anytype, case: corpus.LookupC
             _ = decoded.value.object.orderedRemove(name);
         }
     }
+    // A held asn.type the body left out was read empty, and encodes as "".
+    if (case.body.object.get("asn")) |served| {
+        if (served == .object and !served.object.contains("type")) {
+            if (decoded.value.object.getPtr("asn")) |read| {
+                if (read.object.get("type")) |held| {
+                    try std.testing.expectEqualStrings("", held.string);
+                    _ = read.object.orderedRemove("type");
+                }
+            }
+        }
+    }
     if (!corpus.sameJson(case.body, decoded.value)) {
         std.debug.print("{s}: decoded as {s}\n", .{ case.name, encoded });
         return error.TestExpectedEqual;
