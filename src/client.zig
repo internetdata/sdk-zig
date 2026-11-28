@@ -464,7 +464,7 @@ pub const Client = struct {
     ///
     /// Usage counts against the ALLOWANCE WINDOW - on a paid plan the
     /// anniversary of the subscription, not the calendar month and not the
-    /// billing period, and on the free plan its trial - and it is the same
+    /// billing period, and on the free plan its trial's window - and it is the same
     /// number a lookup is gated on.
     ///
     /// Deliberately NOT cached: the whole point is what has been spent, and a

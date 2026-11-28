@@ -32,8 +32,8 @@ pub const EntitlementApikey = struct {
 pub const EntitlementPlan = struct {
     /// The plan the organization is on, as an identifier that is never renamed
     /// or reused: `free` for the free plan, or a paid plan's key. Compare
-    /// against it, and show `name`. The Data plan is a key per quota,
-    /// `data_1` to `data_7`, each named Data.
+    /// against it, and show `name`. The Data plan is a key per quota
+    /// (`data_1`, `data_2` and on), each named Data.
     key: []const u8,
     /// The plan's name as the site and console show it: `Unlimited` for the
     /// free plan. Show this rather than a name built from `key`.
@@ -54,8 +54,10 @@ pub const EntitlementUsage = struct {
     /// uncapped paid plan and is not the same as zero. Above the quota and
     /// below this, requests are served and billed as overage.
     hard_limit: ?i64,
-    /// When the current allowance period began.
+    /// When the current allowance period began. On the free plan, when its trial
+    /// began, or now before a first lookup starts it.
     window_start: []const u8,
-    /// When the allowance next resets.
+    /// When the allowance next resets. On the free plan, when its trial ends,
+    /// which it does once.
     window_end: []const u8,
 };

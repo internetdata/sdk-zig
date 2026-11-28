@@ -220,9 +220,9 @@ pub const Cache = struct {
     pub const reduced_ttl: Io.Duration = .fromSeconds(60);
 
     /// How long `body` stays: the time to live, or at most a minute for an answer
-    /// marked `trial_expired` or `cap_reached`, which a new UTC month or a raised
-    /// cap ends. Still cached, so a busy process past its trial does not send
-    /// every repeat of an address to the API.
+    /// marked `trial_expired` or `cap_reached`, which an upgrade, a raised cap or a
+    /// paid plan's new window ends. Still cached, so a busy process past its trial
+    /// does not send every repeat of an address to the API.
     fn lifeOf(self: *const Cache, body: []const u8) Io.Duration {
         if (!isReduced(self.gpa, body)) return self.ttl;
         return if (self.ttl.nanoseconds < reduced_ttl.nanoseconds) self.ttl else reduced_ttl;
